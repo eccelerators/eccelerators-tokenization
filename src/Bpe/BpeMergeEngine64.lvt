@@ -1,0 +1,125 @@
+namespace Eccelerators.Tokenization.Bpe
+
+/**
+ * Applies ranked byte-pair merges to one bounded sequence of token symbols.
+ *
+ * The engine stores at most 64 symbols. Compute repeatedly selects the
+ * available pair with the lowest rank and merges every non-overlapping
+ * occurrence of that pair, matching the conventional BPE word algorithm.
+ */
+component BpeMergeEngine64
+{
+	// Maximum number of input and output symbols in one piece.
+	public const MAX_SYMBOLS: int = 64
+
+	// Sentinel above every valid non-negative merge rank.
+	const NO_MERGE_RANK: int = 2147483647
+
+	mergeTable: IBpeMergeTable
+	tokens: int[64]
+	tokenCount: int
+	error: bool
+
+	/**
+	 * Connects the engine to a caller-provided merge table.
+	 */
+	new(mergeTable: IBpeMergeTable)
+	{
+		this.mergeTable = mergeTable
+	}
+
+	/**
+	 * Clears the current symbol sequence and error state.
+	 */
+	public fn Reset()
+	{
+		tokenCount = 0
+		error = false
+	}
+
+	/**
+	 * Appends one initial symbol and returns whether it was accepted.
+	 */
+	public fn AppendSymbol(token: int) bool
+	{
+		if (tokenCount >= MAX_SYMBOLS) {
+			error = true
+			return false
+		}
+
+		tokens[tokenCount] = token
+		tokenCount++
+		return true
+	}
+
+	/**
+	 * Applies all ranked merges until no pair in the table remains.
+	 */
+	public fn Compute()
+	{
+		var keepMerging = true
+		while (keepMerging && tokenCount > 1) {
+			var found = false
+			var bestRank = NO_MERGE_RANK
+			var bestLeft = 0
+			var bestRight = 0
+			var bestResult = 0
+
+			for (var index = 0; index + 1 < tokenCount; index++) {
+				this.mergeTable.Lookup(tokens[index], tokens[index + 1])
+				if (this.mergeTable.HasMerge()) {
+					var rank = this.mergeTable.GetRank()
+					if (!found || rank < bestRank) {
+						found = true
+						bestRank = rank
+						bestLeft = tokens[index]
+						bestRight = tokens[index + 1]
+						bestResult = this.mergeTable.GetMergedToken()
+					}
+				}
+			}
+
+			if (!found) {
+				keepMerging = false
+			} else {
+				var readIndex = 0
+				var writeIndex = 0
+				while (readIndex < tokenCount) {
+					var pairMatches = false
+					if (readIndex + 1 < tokenCount) {
+						pairMatches = tokens[readIndex] == bestLeft &&
+							tokens[readIndex + 1] == bestRight
+					}
+					if (pairMatches) {
+						tokens[writeIndex] = bestResult
+						readIndex = readIndex + 2
+					} else {
+						tokens[writeIndex] = tokens[readIndex]
+						readIndex++
+					}
+					writeIndex++
+				}
+				tokenCount = writeIndex
+			}
+		}
+	}
+
+	/**
+	 * Returns the number of symbols currently stored.
+	 */
+	public fn GetCount() int { return tokenCount }
+
+	/**
+	 * Returns one result symbol, or zero when the index is outside the result.
+	 */
+	public fn GetToken(index: int) int
+	{
+		if (index < 0 || index >= tokenCount) { return 0 }
+		return tokens[index]
+	}
+
+	/**
+	 * Returns whether an input exceeded the bounded symbol storage.
+	 */
+	public fn HasError() bool { return error }
+}

@@ -1,0 +1,80 @@
+namespace Eccelerators.Tokenization.Gpt2
+
+/**
+ * Decodes GPT-2 token IDs into a bounded stream of original bytes.
+ *
+ * The vocabulary provider reverses GPT-2 byte encoding. Decoded output remains
+ * byte-oriented: callers may interpret supported ASCII bytes directly or pass
+ * the byte sequence to an application-specific consumer.
+ */
+component Gpt2BpeDecoder128
+{
+	// Maximum decoded output retained between Reset calls.
+	public const MAX_OUTPUT_BYTES: int = 128
+
+	vocabulary: IGpt2Vocabulary
+	outputBytes: byte[128]
+	outputLength: int
+	error: bool
+
+	/**
+	 * Connects the decoder to model-specific vocabulary storage.
+	 */
+	new(vocabulary: IGpt2Vocabulary)
+	{
+		this.vocabulary = vocabulary
+	}
+
+	/**
+	 * Clears decoded bytes and error state.
+	 */
+	public fn Reset()
+	{
+		outputLength = 0
+		error = false
+	}
+
+	/**
+	 * Appends the bytes represented by one token and reports acceptance.
+	 */
+	public fn AppendToken(token: int) bool
+	{
+		this.vocabulary.ReadToken(token)
+		if (!this.vocabulary.HasToken()) {
+			error = true
+			return false
+		}
+
+		var tokenLength = this.vocabulary.GetTokenLength()
+		if (tokenLength < 0 || outputLength + tokenLength > MAX_OUTPUT_BYTES) {
+			error = true
+			return false
+		}
+
+		for (var index = 0; index < tokenLength; index++) {
+			var outputByte = this.vocabulary.GetTokenByte(index)
+			outputBytes[outputLength] = outputByte
+			outputLength++
+		}
+		return true
+	}
+
+	/**
+	 * Returns the number of decoded bytes currently available.
+	 */
+	public fn GetByteCount() int { return outputLength }
+
+	/**
+	 * Returns one decoded byte, or zero outside the output sequence.
+	 */
+	public fn GetByte(index: int) byte
+	{
+		if (index < 0 || index >= outputLength) { return 0x00 }
+		return outputBytes[index]
+	}
+
+	/**
+	 * Returns whether a token lookup or output-capacity check failed.
+	 */
+	public fn HasError() bool { return error }
+}

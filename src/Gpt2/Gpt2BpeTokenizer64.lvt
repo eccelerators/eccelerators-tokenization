@@ -1,0 +1,294 @@
+namespace Eccelerators.Tokenization.Gpt2
+
+using Eccelerators.Tokenization.Bpe
+
+/**
+ * Tokenizes a bounded ASCII input with GPT-2 byte-level BPE semantics.
+ *
+ * The caller supplies vocabulary and merge storage. Input is accumulated with
+ * AcceptAscii, then Tokenize produces at most 64 token IDs. Carriage return and
+ * line feed are ordinary input bytes; callers should consume transport or
+ * framing delimiters unless they belong to the input text.
+ */
+component Gpt2BpeTokenizer64
+{
+	// Maximum accepted ASCII bytes and produced token IDs.
+	public const MAX_INPUT_BYTES: int = 64
+	public const MAX_OUTPUT_TOKENS: int = 64
+
+	// ASCII bytes used by the GPT-2 pre-tokenization expression.
+	const ASCII_TAB: byte = 0x09
+	const ASCII_LINE_FEED: byte = 0x0a
+	const ASCII_VERTICAL_TAB: byte = 0x0b
+	const ASCII_FORM_FEED: byte = 0x0c
+	const ASCII_CARRIAGE_RETURN: byte = 0x0d
+	const ASCII_SPACE: byte = 0x20
+	const ASCII_APOSTROPHE: byte = 0x27
+	const ASCII_DIGIT_FIRST: byte = 0x30
+	const ASCII_DIGIT_LAST: byte = 0x39
+	const ASCII_UPPERCASE_FIRST: byte = 0x41
+	const ASCII_UPPERCASE_LAST: byte = 0x5a
+	const ASCII_LOWERCASE_FIRST: byte = 0x61
+	const ASCII_LOWERCASE_LAST: byte = 0x7a
+	const ASCII_MAXIMUM: int = 127
+	const ASCII_CASE_OFFSET: int = 32
+
+	// Lowercase suffix letters recognized by the GPT-2 contraction alternatives.
+	const CONTRACTION_D: byte = 0x64
+	const CONTRACTION_E: byte = 0x65
+	const CONTRACTION_L: byte = 0x6c
+	const CONTRACTION_M: byte = 0x6d
+	const CONTRACTION_R: byte = 0x72
+	const CONTRACTION_S: byte = 0x73
+	const CONTRACTION_T: byte = 0x74
+	const CONTRACTION_V: byte = 0x76
+
+	vocabulary: IGpt2Vocabulary
+	mergeEngine: BpeMergeEngine64
+	inputBytes: byte[64]
+	outputTokens: int[64]
+	inputLength: int
+	outputCount: int
+	error: bool
+
+	/**
+	 * Connects the tokenizer to model-specific vocabulary and merge storage.
+	 */
+	new(vocabulary: IGpt2Vocabulary, mergeTable: IBpeMergeTable)
+	{
+		this.vocabulary = vocabulary
+		this.mergeEngine = new BpeMergeEngine64(mergeTable)
+	}
+
+	/**
+	 * Clears accumulated input, token output, and error state.
+	 */
+	public fn Reset()
+	{
+		inputLength = 0
+		outputCount = 0
+		error = false
+		this.mergeEngine.Reset()
+	}
+
+	/**
+	 * Appends one seven-bit ASCII byte and returns whether it was accepted.
+	 */
+	public fn AcceptAscii(value: byte) bool
+	{
+		if ((value as int) > ASCII_MAXIMUM || inputLength >= MAX_INPUT_BYTES) {
+			error = true
+			return false
+		}
+
+		inputBytes[inputLength] = value
+		inputLength++
+		return true
+	}
+
+	/**
+	 * Tokenizes all accepted bytes and replaces the previous output sequence.
+	 */
+	public fn Tokenize()
+	{
+		outputCount = 0
+		if (error) { return }
+
+		var index = 0
+		while (index < inputLength) {
+			var value = inputBytes[index]
+			if (IsWhitespace(value)) {
+				var whitespaceEnd = index + 1
+				var scanningWhitespace = true
+				while (whitespaceEnd < inputLength && scanningWhitespace) {
+					if (IsWhitespace(inputBytes[whitespaceEnd])) {
+						whitespaceEnd++
+					} else {
+						scanningWhitespace = false
+					}
+				}
+
+				var finalWhitespace = inputBytes[whitespaceEnd - 1]
+				if (whitespaceEnd >= inputLength || finalWhitespace != ASCII_SPACE) {
+					TokenizePiece(index, whitespaceEnd - index)
+					index = whitespaceEnd
+				} else {
+					var whitespaceLength = whitespaceEnd - index
+					if (whitespaceLength > 1) {
+						TokenizePiece(index, whitespaceLength - 1)
+					}
+
+					var pieceStart = whitespaceEnd - 1
+					var contentStart = whitespaceEnd
+					var contentEnd = FindClassEnd(contentStart)
+					TokenizePiece(pieceStart, contentEnd - pieceStart)
+					index = contentEnd
+				}
+			} else {
+				var contractionLength = FindContractionLength(index)
+				if (contractionLength > 0) {
+					TokenizePiece(index, contractionLength)
+					index = index + contractionLength
+				} else {
+					var pieceEnd = FindClassEnd(index)
+					TokenizePiece(index, pieceEnd - index)
+					index = pieceEnd
+				}
+			}
+		}
+	}
+
+	/**
+	 * Returns the number of ASCII bytes accumulated for the next tokenization.
+	 */
+	public fn GetInputLength() int { return inputLength }
+
+	/**
+	 * Returns the number of produced token IDs.
+	 */
+	public fn GetTokenCount() int { return outputCount }
+
+	/**
+	 * Returns one output token ID, or zero outside the output sequence.
+	 */
+	public fn GetToken(index: int) int
+	{
+		if (index < 0 || index >= outputCount) { return 0 }
+		return outputTokens[index]
+	}
+
+	/**
+	 * Returns whether input, lookup, piece, or output capacity was invalid.
+	 */
+	public fn HasError() bool { return error }
+
+	/**
+	 * Returns whether the byte belongs to an ASCII letter run.
+	 */
+	inline fn IsLetter(value: byte) bool
+	{
+		return (value >= ASCII_UPPERCASE_FIRST && value <= ASCII_UPPERCASE_LAST) ||
+			(value >= ASCII_LOWERCASE_FIRST && value <= ASCII_LOWERCASE_LAST)
+	}
+
+	/**
+	 * Returns whether the byte belongs to an ASCII digit run.
+	 */
+	inline fn IsDigit(value: byte) bool
+	{
+		return value >= ASCII_DIGIT_FIRST && value <= ASCII_DIGIT_LAST
+	}
+
+	/**
+	 * Returns whether the byte is ASCII whitespace.
+	 */
+	inline fn IsWhitespace(value: byte) bool
+	{
+		return value == ASCII_TAB || value == ASCII_LINE_FEED ||
+			value == ASCII_VERTICAL_TAB || value == ASCII_FORM_FEED ||
+			value == ASCII_CARRIAGE_RETURN || value == ASCII_SPACE
+	}
+
+	/**
+	 * Converts one ASCII letter to lowercase for contraction recognition.
+	 */
+	inline fn Lower(value: byte) byte
+	{
+		if (value >= ASCII_UPPERCASE_FIRST && value <= ASCII_UPPERCASE_LAST) {
+			return ((value as int) + ASCII_CASE_OFFSET) as byte
+		}
+		return value
+	}
+
+	/**
+	 * Finds the end of the letter, digit, or punctuation run at start.
+	 */
+	fn FindClassEnd(start: int) int
+	{
+		if (start >= inputLength) { return inputLength }
+
+		var first = inputBytes[start]
+		var end = start + 1
+		if (IsLetter(first)) {
+			while (end < inputLength) {
+				if (!IsLetter(inputBytes[end])) { return end }
+				end++
+			}
+			return end
+		}
+
+		if (IsDigit(first)) {
+			while (end < inputLength) {
+				if (!IsDigit(inputBytes[end])) { return end }
+				end++
+			}
+			return end
+		}
+
+		while (end < inputLength) {
+			var value = inputBytes[end]
+			if (IsWhitespace(value) || IsLetter(value) || IsDigit(value)) { return end }
+			end++
+		}
+		return end
+	}
+
+	/**
+	 * Returns a GPT-2 contraction piece length beginning at start, or zero.
+	 */
+	fn FindContractionLength(start: int) int
+	{
+		if (inputBytes[start] != ASCII_APOSTROPHE || start + 1 >= inputLength) { return 0 }
+
+		var first = Lower(inputBytes[start + 1])
+		if (first == CONTRACTION_S || first == CONTRACTION_T ||
+			first == CONTRACTION_M || first == CONTRACTION_D) {
+			return 2
+		}
+
+		if (start + 2 >= inputLength) { return 0 }
+		var second = Lower(inputBytes[start + 2])
+		if ((first == CONTRACTION_R && second == CONTRACTION_E) ||
+			(first == CONTRACTION_V && second == CONTRACTION_E) ||
+			(first == CONTRACTION_L && second == CONTRACTION_L)) { return 3 }
+		return 0
+	}
+
+	/**
+	 * Converts and merges one pre-tokenized byte piece into the output stream.
+	 */
+	fn TokenizePiece(start: int, length: int)
+	{
+		this.mergeEngine.Reset()
+		for (var offset = 0; offset < length; offset++) {
+			this.vocabulary.LookupByte(inputBytes[start + offset])
+			if (!this.vocabulary.HasByteToken()) {
+				error = true
+				return
+			}
+
+			var byteToken = this.vocabulary.GetByteToken()
+			if (!this.mergeEngine.AppendSymbol(byteToken)) {
+				error = true
+				return
+			}
+		}
+
+		this.mergeEngine.Compute()
+		if (this.mergeEngine.HasError()) {
+			error = true
+			return
+		}
+
+		for (var index = 0; index < this.mergeEngine.GetCount(); index++) {
+			if (outputCount >= MAX_OUTPUT_TOKENS) {
+				error = true
+				return
+			}
+
+			var outputToken = this.mergeEngine.GetToken(index)
+			outputTokens[outputCount] = outputToken
+			outputCount++
+		}
+	}
+}

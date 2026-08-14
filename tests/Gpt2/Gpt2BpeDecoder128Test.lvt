@@ -1,0 +1,104 @@
+namespace Eccelerators.Tokenization.Tests.Gpt2
+
+using Eccelerators.Tokenization.Gpt2
+
+/**
+ * Verifies bounded GPT-2 token-to-byte decoding.
+ */
+@Test
+component Gpt2BpeDecoder128Test
+{
+	const HELLO_WORLD_BYTE_COUNT: int = 13
+	const HELLO_WORLD_TOKEN_COUNT: int = 4
+	const HELLO_WORLD_BYTES: byte[13] = "Hello, world!".Encode()
+	const HELLO_WORLD_TOKENS: int[4] = [
+		Gpt2VocabularyFixture.TOKEN_HELLO,
+		Gpt2VocabularyFixture.TOKEN_COMMA,
+		Gpt2VocabularyFixture.TOKEN_WORLD_WITH_LEADING_SPACE,
+		Gpt2VocabularyFixture.TOKEN_EXCLAMATION,
+	]
+
+	vocabulary: Gpt2VocabularyFixture
+	decoder: Gpt2BpeDecoder128
+
+	/**
+	 * Connects the decoder to the deterministic vocabulary fixture.
+	 */
+	new()
+	{
+		this.vocabulary = new Gpt2VocabularyFixture()
+		this.decoder = new Gpt2BpeDecoder128(this.vocabulary)
+	}
+
+	/**
+	 * Verifies that the conformance token sequence reconstructs ASCII text.
+	 */
+	@Test
+	fn DecodesHelloWorld()
+	{
+		this.decoder.Reset()
+		for (var index = 0; index < HELLO_WORLD_TOKEN_COUNT; index++) {
+			assert this.decoder.AppendToken(HELLO_WORLD_TOKENS[index]) == true
+		}
+
+		assert this.decoder.HasError() == false
+		assert this.decoder.GetByteCount() == HELLO_WORLD_BYTE_COUNT
+		for (var index = 0; index < HELLO_WORLD_BYTE_COUNT; index++) {
+			assert this.decoder.GetByte(index) == HELLO_WORLD_BYTES[index]
+		}
+	}
+
+	/**
+	 * Verifies deterministic rejection of a token absent from the vocabulary.
+	 */
+	@Test
+	fn RejectsUnknownToken()
+	{
+		this.decoder.Reset()
+		assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_END_OF_TEXT) == false
+		assert this.decoder.HasError() == true
+		assert this.decoder.GetByteCount() == 0
+	}
+
+	/**
+	 * Verifies the exact output bound and atomic rejection of an overflowing token.
+	 */
+	@Test
+	fn EnforcesOutputCapacityWithoutPartialAppend()
+	{
+		this.decoder.Reset()
+		for (var index = 0; index < Gpt2BpeDecoder128.MAX_OUTPUT_BYTES; index++) {
+			assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_EXCLAMATION) == true
+		}
+		assert this.decoder.GetByteCount() == Gpt2BpeDecoder128.MAX_OUTPUT_BYTES
+		assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_EXCLAMATION) == false
+		assert this.decoder.HasError() == true
+		assert this.decoder.GetByteCount() == Gpt2BpeDecoder128.MAX_OUTPUT_BYTES
+
+		this.decoder.Reset()
+		for (var index = 0; index < Gpt2BpeDecoder128.MAX_OUTPUT_BYTES - 1; index++) {
+			assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_EXCLAMATION) == true
+		}
+		assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_HELLO) == false
+		assert this.decoder.GetByteCount() == Gpt2BpeDecoder128.MAX_OUTPUT_BYTES - 1
+	}
+
+	/**
+	 * Verifies safe invalid reads and recovery from an earlier decoding failure.
+	 */
+	@Test
+	fn HandlesInvalidIndexesAndResetRecovery()
+	{
+		this.decoder.Reset()
+		assert this.decoder.GetByte(-1) == 0x00
+		assert this.decoder.GetByte(0) == 0x00
+		assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_END_OF_TEXT) == false
+
+		this.decoder.Reset()
+		assert this.decoder.HasError() == false
+		assert this.decoder.AppendToken(Gpt2VocabularyFixture.TOKEN_EXCLAMATION) == true
+		assert this.decoder.GetByteCount() == 1
+		assert this.decoder.GetByte(0) == 0x21
+		assert this.decoder.GetByte(1) == 0x00
+	}
+}

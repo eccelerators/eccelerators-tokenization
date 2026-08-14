@@ -1,0 +1,19 @@
+[project]
+name = "Eccelerators.Tokenization"
+version = "0.1.0"
+path = "src"
+outdir = "out"
+
+[tests]
+path = "tests"
+components = [
+    "BpeMergeEngine64Test",
+    "Gpt2BpeTokenizer64Test",
+    "Gpt2BpeDecoder128Test"
+]
+
+[build.debug]
+warnings = ["all", "no-variable-divisor"]
+
+[build.release]
+warnings = ["all"]

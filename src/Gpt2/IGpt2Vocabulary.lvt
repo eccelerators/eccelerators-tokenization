@@ -1,0 +1,45 @@
+namespace Eccelerators.Tokenization.Gpt2
+
+/**
+ * Storage-independent GPT-2 vocabulary contract for encoding and decoding.
+ *
+ * LookupByte maps one original byte to its initial byte-level BPE token.
+ * ReadToken exposes the original byte sequence represented by a final token.
+ */
+interface IGpt2Vocabulary
+{
+	/**
+	 * Looks up the initial byte-level token for one original byte.
+	 */
+	fn LookupByte(value: byte)
+
+	/**
+	 * Returns whether the last byte lookup succeeded.
+	 */
+	fn HasByteToken() bool
+
+	/**
+	 * Returns the initial token from the last successful byte lookup.
+	 */
+	fn GetByteToken() int
+
+	/**
+	 * Selects one final vocabulary token for byte-oriented decoding.
+	 */
+	fn ReadToken(token: int)
+
+	/**
+	 * Returns whether the selected final token exists.
+	 */
+	fn HasToken() bool
+
+	/**
+	 * Returns the decoded byte count of the selected final token.
+	 */
+	fn GetTokenLength() int
+
+	/**
+	 * Returns one decoded byte of the selected final token.
+	 */
+	fn GetTokenByte(index: int) byte
+}

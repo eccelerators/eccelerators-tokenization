@@ -1,0 +1,30 @@
+namespace Eccelerators.Tokenization.Bpe
+
+/**
+ * Storage-independent lookup contract for ranked byte-pair merge rules.
+ *
+ * A lower non-negative rank has higher priority. Implementations may use ROM,
+ * RAM, external memory, or generated combinational fixtures.
+ */
+interface IBpeMergeTable
+{
+	/**
+	 * Looks up one ordered adjacent-token pair.
+	 */
+	fn Lookup(leftToken: int, rightToken: int)
+
+	/**
+	 * Returns whether the last lookup found a merge rule.
+	 */
+	fn HasMerge() bool
+
+	/**
+	 * Returns the non-negative priority rank from the last successful lookup.
+	 */
+	fn GetRank() int
+
+	/**
+	 * Returns the result token from the last successful lookup.
+	 */
+	fn GetMergedToken() int
+}

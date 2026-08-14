@@ -1,0 +1,196 @@
+namespace Eccelerators.Tokenization.Tests.Bpe
+
+using Eccelerators.Tokenization.Bpe
+
+/**
+ * Small deterministic merge table used to verify the reusable BPE engine.
+ */
+component BpeMergeFixture: IBpeMergeTable
+{
+	public const TOKEN_A: int = 1
+	public const TOKEN_B: int = 2
+	public const TOKEN_C: int = 3
+	public const TOKEN_AB: int = 10
+	public const TOKEN_BC: int = 20
+	public const TOKEN_ABC: int = 30
+
+	const RANK_AB: int = 5
+	const RANK_BC: int = 1
+	const RANK_ABC: int = 8
+
+	found: bool
+	rank: int
+	mergedToken: int
+
+	/**
+	 * Looks up the three rules used by the engine tests.
+	 */
+	override fn Lookup(leftToken: int, rightToken: int)
+	{
+		found = false
+		rank = 0
+		mergedToken = 0
+		if (leftToken == TOKEN_A && rightToken == TOKEN_B) {
+			found = true
+			rank = RANK_AB
+			mergedToken = TOKEN_AB
+		}
+		if (leftToken == TOKEN_B && rightToken == TOKEN_C) {
+			found = true
+			rank = RANK_BC
+			mergedToken = TOKEN_BC
+		}
+		if (leftToken == TOKEN_AB && rightToken == TOKEN_C) {
+			found = true
+			rank = RANK_ABC
+			mergedToken = TOKEN_ABC
+		}
+	}
+
+	/**
+	 * Returns whether the last pair has a merge rule.
+	 */
+	override fn HasMerge() bool { return found }
+
+	/**
+	 * Returns the rank of the last matching rule.
+	 */
+	override fn GetRank() int { return rank }
+
+	/**
+	 * Returns the token produced by the last matching rule.
+	 */
+	override fn GetMergedToken() int { return mergedToken }
+}
+
+/**
+ * Verifies ranked, repeated, bounded byte-pair merging.
+ */
+@Test
+component BpeMergeEngine64Test
+{
+	const PRIORITY_INPUT_COUNT: int = 3
+	const PRIORITY_OUTPUT_COUNT: int = 2
+	const PRIORITY_INPUT: int[3] = [
+		BpeMergeFixture.TOKEN_A,
+		BpeMergeFixture.TOKEN_B,
+		BpeMergeFixture.TOKEN_C,
+	]
+	const PRIORITY_OUTPUT: int[2] = [
+		BpeMergeFixture.TOKEN_A,
+		BpeMergeFixture.TOKEN_BC,
+	]
+	const REPEATED_INPUT_COUNT: int = 4
+	const REPEATED_OUTPUT_COUNT: int = 2
+	const REPEATED_INPUT: int[4] = [
+		BpeMergeFixture.TOKEN_A,
+		BpeMergeFixture.TOKEN_B,
+		BpeMergeFixture.TOKEN_A,
+		BpeMergeFixture.TOKEN_B,
+	]
+	const REPEATED_OUTPUT: int[2] = [
+		BpeMergeFixture.TOKEN_AB,
+		BpeMergeFixture.TOKEN_AB,
+	]
+	const OVERFLOW_SYMBOL: int = 99
+
+	table: BpeMergeFixture
+	engine: BpeMergeEngine64
+
+	/**
+	 * Connects the merge engine to its deterministic table fixture.
+	 */
+	new()
+	{
+		this.table = new BpeMergeFixture()
+		this.engine = new BpeMergeEngine64(this.table)
+	}
+
+	/**
+	 * Verifies that the lowest rank is selected before an earlier pair.
+	 */
+	@Test
+	fn SelectsLowestRankFirst()
+	{
+		this.engine.Reset()
+		for (var index = 0; index < PRIORITY_INPUT_COUNT; index++) {
+			assert this.engine.AppendSymbol(PRIORITY_INPUT[index]) == true
+		}
+		this.engine.Compute()
+
+		assert this.engine.HasError() == false
+		assert this.engine.GetCount() == PRIORITY_OUTPUT_COUNT
+		for (var index = 0; index < PRIORITY_OUTPUT_COUNT; index++) {
+			assert this.engine.GetToken(index) == PRIORITY_OUTPUT[index]
+		}
+	}
+
+	/**
+	 * Verifies that all non-overlapping occurrences of a selected pair merge.
+	 */
+	@Test
+	fn MergesRepeatedPairOccurrences()
+	{
+		this.engine.Reset()
+		for (var index = 0; index < REPEATED_INPUT_COUNT; index++) {
+			assert this.engine.AppendSymbol(REPEATED_INPUT[index]) == true
+		}
+		this.engine.Compute()
+
+		assert this.engine.GetCount() == REPEATED_OUTPUT_COUNT
+		for (var index = 0; index < REPEATED_OUTPUT_COUNT; index++) {
+			assert this.engine.GetToken(index) == REPEATED_OUTPUT[index]
+		}
+	}
+
+	/**
+	 * Verifies that a full input reports overflow without corrupting its count.
+	 */
+	@Test
+	fn ReportsBoundedInputOverflow()
+	{
+		this.engine.Reset()
+		for (var index = 0; index < BpeMergeEngine64.MAX_SYMBOLS; index++) {
+			assert this.engine.AppendSymbol(index) == true
+		}
+
+		assert this.engine.AppendSymbol(OVERFLOW_SYMBOL) == false
+		assert this.engine.HasError() == true
+		assert this.engine.GetCount() == BpeMergeEngine64.MAX_SYMBOLS
+	}
+
+	/**
+	 * Verifies that empty input and invalid result indexes are handled safely.
+	 */
+	@Test
+	fn HandlesEmptyInputAndInvalidIndexes()
+	{
+		this.engine.Reset()
+		this.engine.Compute()
+
+		assert this.engine.HasError() == false
+		assert this.engine.GetCount() == 0
+		assert this.engine.GetToken(-1) == 0
+		assert this.engine.GetToken(0) == 0
+	}
+
+	/**
+	 * Verifies that Reset clears a bounded-input failure for the next piece.
+	 */
+	@Test
+	fn ResetRecoversFromOverflow()
+	{
+		this.engine.Reset()
+		for (var index = 0; index < BpeMergeEngine64.MAX_SYMBOLS; index++) {
+			assert this.engine.AppendSymbol(index) == true
+		}
+		assert this.engine.AppendSymbol(OVERFLOW_SYMBOL) == false
+
+		this.engine.Reset()
+		assert this.engine.AppendSymbol(BpeMergeFixture.TOKEN_A) == true
+		this.engine.Compute()
+		assert this.engine.HasError() == false
+		assert this.engine.GetCount() == 1
+		assert this.engine.GetToken(0) == BpeMergeFixture.TOKEN_A
+	}
+}

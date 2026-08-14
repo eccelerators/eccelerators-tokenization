@@ -1,0 +1,598 @@
+namespace Eccelerators.Tokenization.Tests.Gpt2
+
+using Eccelerators.Tokenization.Bpe
+using Eccelerators.Tokenization.Gpt2
+
+/**
+ * Minimal GPT-2 vocabulary fixture for ASCII conformance vectors.
+ */
+component Gpt2VocabularyFixture: IGpt2Vocabulary
+{
+	// Final GPT-2 token IDs used by both tokenizer and decoder tests.
+	public const TOKEN_EXCLAMATION: int = 0
+	public const TOKEN_COMMA: int = 11
+	public const TOKEN_WORLD_WITH_LEADING_SPACE: int = 995
+	public const TOKEN_HELLO: int = 15496
+	public const TOKEN_END_OF_TEXT: int = 50256
+
+	// Initial GPT-2 byte-level tokens needed by the boundary fixtures.
+	public const TOKEN_BYTE_APOSTROPHE: int = 6
+	public const TOKEN_BYTE_A: int = 64
+	public const TOKEN_BYTE_D: int = 67
+	public const TOKEN_BYTE_E: int = 68
+	public const TOKEN_BYTE_H: int = 39
+	public const TOKEN_BYTE_I: int = 72
+	public const TOKEN_BYTE_L: int = 75
+	public const TOKEN_BYTE_M: int = 76
+	public const TOKEN_BYTE_O: int = 78
+	public const TOKEN_BYTE_R: int = 81
+	public const TOKEN_BYTE_S: int = 82
+	public const TOKEN_BYTE_T: int = 83
+	public const TOKEN_BYTE_V: int = 85
+	public const TOKEN_BYTE_W: int = 86
+	public const TOKEN_BYTE_UPPERCASE_S: int = 50
+	public const TOKEN_BYTE_DIGIT_ONE: int = 16
+	public const TOKEN_BYTE_DIGIT_TWO: int = 17
+	public const TOKEN_BYTE_TAB: int = 197
+	public const TOKEN_BYTE_LINE_FEED: int = 198
+	public const TOKEN_BYTE_SPACE: int = 220
+
+	const ASCII_TAB: byte = 0x09
+	const ASCII_LINE_FEED: byte = 0x0a
+	const ASCII_SPACE: byte = 0x20
+	const PRINTABLE_ASCII_FIRST: byte = 0x21
+	const PRINTABLE_ASCII_LAST: byte = 0x7e
+	const PRINTABLE_TOKEN_OFFSET: int = 33
+	const TOKEN_HELLO_LENGTH: int = 5
+	const TOKEN_WORLD_LENGTH: int = 6
+	const TOKEN_PUNCTUATION_LENGTH: int = 1
+	const TOKEN_HELLO_BYTES: byte[5] = "Hello".Encode()
+	const TOKEN_WORLD_BYTES: byte[6] = " world".Encode()
+	const ASCII_COMMA: byte = 0x2c
+	const ASCII_EXCLAMATION: byte = 0x21
+
+	byteFound: bool
+	byteToken: int
+	selectedToken: int
+	tokenFound: bool
+
+	/**
+	 * Maps printable ASCII through the corresponding GPT-2 base symbols.
+	 */
+	override fn LookupByte(value: byte)
+	{
+		byteFound = false
+		byteToken = 0
+		if (value == ASCII_TAB) {
+			byteFound = true
+			byteToken = TOKEN_BYTE_TAB
+			return
+		}
+		if (value == ASCII_LINE_FEED) {
+			byteFound = true
+			byteToken = TOKEN_BYTE_LINE_FEED
+			return
+		}
+		if (value == ASCII_SPACE) {
+			byteFound = true
+			byteToken = TOKEN_BYTE_SPACE
+			return
+		}
+		if (value >= PRINTABLE_ASCII_FIRST && value <= PRINTABLE_ASCII_LAST) {
+			byteFound = true
+			byteToken = (value as int) - PRINTABLE_TOKEN_OFFSET
+		}
+	}
+
+	/**
+	 * Returns whether the last byte is represented by this fixture.
+	 */
+	override fn HasByteToken() bool { return byteFound }
+
+	/**
+	 * Returns the initial token for the last byte lookup.
+	 */
+	override fn GetByteToken() int { return byteToken }
+
+	/**
+	 * Selects one complete token for byte-oriented decoding.
+	 */
+	override fn ReadToken(token: int)
+	{
+		selectedToken = token
+		tokenFound = token == TOKEN_HELLO || token == TOKEN_COMMA ||
+			token == TOKEN_WORLD_WITH_LEADING_SPACE || token == TOKEN_EXCLAMATION
+	}
+
+	/**
+	 * Returns whether the selected token is part of this fixture.
+	 */
+	override fn HasToken() bool { return tokenFound }
+
+	/**
+	 * Returns the decoded byte count for the selected token.
+	 */
+	override fn GetTokenLength() int
+	{
+		if (selectedToken == TOKEN_HELLO) { return TOKEN_HELLO_LENGTH }
+		if (selectedToken == TOKEN_WORLD_WITH_LEADING_SPACE) { return TOKEN_WORLD_LENGTH }
+		if (selectedToken == TOKEN_COMMA || selectedToken == TOKEN_EXCLAMATION) {
+			return TOKEN_PUNCTUATION_LENGTH
+		}
+		return 0
+	}
+
+	/**
+	 * Returns one original byte from the selected token.
+	 */
+	override fn GetTokenByte(index: int) byte
+	{
+		if (selectedToken == TOKEN_HELLO && index >= 0 && index < TOKEN_HELLO_LENGTH) {
+			return TOKEN_HELLO_BYTES[index]
+		}
+		if (selectedToken == TOKEN_WORLD_WITH_LEADING_SPACE &&
+			index >= 0 && index < TOKEN_WORLD_LENGTH) {
+			return TOKEN_WORLD_BYTES[index]
+		}
+		if (selectedToken == TOKEN_COMMA && index == 0) { return ASCII_COMMA }
+		if (selectedToken == TOKEN_EXCLAMATION && index == 0) { return ASCII_EXCLAMATION }
+		return 0x00
+	}
+}
+
+/**
+ * Minimal ranked merge fixture producing the pinned GPT-2 example tokens.
+ */
+component Gpt2MergeFixture: IBpeMergeTable
+{
+	// Final synthetic contraction tokens exposed to the tokenizer tests.
+	public const TOKEN_CONTRACTION_S: int = 910
+	public const TOKEN_CONTRACTION_T: int = 911
+	public const TOKEN_CONTRACTION_M: int = 912
+	public const TOKEN_CONTRACTION_D: int = 913
+	public const TOKEN_CONTRACTION_RE: int = 921
+	public const TOKEN_CONTRACTION_VE: int = 923
+	public const TOKEN_CONTRACTION_LL: int = 925
+	public const TOKEN_CONTRACTION_UPPERCASE_S: int = 930
+
+	// Synthetic intermediate tokens make every fixture merge step readable.
+	const TOKEN_HE: int = 300
+	const TOKEN_HEL: int = 301
+	const TOKEN_HELL: int = 302
+	const TOKEN_SPACE_W: int = 400
+	const TOKEN_SPACE_WO: int = 401
+	const TOKEN_SPACE_WOR: int = 402
+	const TOKEN_SPACE_WORL: int = 403
+	const TOKEN_CROSS_CONTRACTION_BOUNDARY: int = 900
+	const TOKEN_CROSS_SPACE_BOUNDARY: int = 901
+	const TOKEN_CROSS_TAB_BOUNDARY: int = 902
+	const TOKEN_CONTRACTION_APOSTROPHE_R: int = 920
+	const TOKEN_CONTRACTION_APOSTROPHE_V: int = 922
+	const TOKEN_CONTRACTION_APOSTROPHE_L: int = 924
+	const MERGE_RANK_FIRST: int = 0
+	const MERGE_RANK_SECOND: int = 1
+	const MERGE_RANK_THIRD: int = 2
+	const MERGE_RANK_FOURTH: int = 3
+	const MERGE_RANK_FIFTH: int = 4
+
+	found: bool
+	rank: int
+	mergedToken: int
+
+	/**
+	 * Looks up the merges needed for `Hello, world!` and boundary checks.
+	 */
+	override fn Lookup(leftToken: int, rightToken: int)
+	{
+		found = false
+		rank = 0
+		mergedToken = 0
+
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_H &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_E) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_HE)
+		}
+		if (leftToken == TOKEN_HE && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_L) {
+			SetMatch(MERGE_RANK_SECOND, TOKEN_HEL)
+		}
+		if (leftToken == TOKEN_HEL && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_L) {
+			SetMatch(MERGE_RANK_THIRD, TOKEN_HELL)
+		}
+		if (leftToken == TOKEN_HELL && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_O) {
+			SetMatch(MERGE_RANK_FOURTH, Gpt2VocabularyFixture.TOKEN_HELLO)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_SPACE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_W) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_SPACE_W)
+		}
+		if (leftToken == TOKEN_SPACE_W && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_O) {
+			SetMatch(MERGE_RANK_SECOND, TOKEN_SPACE_WO)
+		}
+		if (leftToken == TOKEN_SPACE_WO && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_R) {
+			SetMatch(MERGE_RANK_THIRD, TOKEN_SPACE_WOR)
+		}
+		if (leftToken == TOKEN_SPACE_WOR && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_L) {
+			SetMatch(MERGE_RANK_FOURTH, TOKEN_SPACE_WORL)
+		}
+		if (leftToken == TOKEN_SPACE_WORL && rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_D) {
+			SetMatch(MERGE_RANK_FIFTH, Gpt2VocabularyFixture.TOKEN_WORLD_WITH_LEADING_SPACE)
+		}
+
+		// These rules must not match because GPT-2 pre-tokenization separates the pairs.
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_T &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CROSS_CONTRACTION_BOUNDARY)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_SPACE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_SPACE) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CROSS_SPACE_BOUNDARY)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_TAB &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_A) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CROSS_TAB_BOUNDARY)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_S) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_S)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_UPPERCASE_S) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_UPPERCASE_S)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_T) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_T)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_M) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_M)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_D) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_D)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_R) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_APOSTROPHE_R)
+		}
+		if (leftToken == TOKEN_CONTRACTION_APOSTROPHE_R &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_E) {
+			SetMatch(MERGE_RANK_SECOND, TOKEN_CONTRACTION_RE)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_V) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_APOSTROPHE_V)
+		}
+		if (leftToken == TOKEN_CONTRACTION_APOSTROPHE_V &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_E) {
+			SetMatch(MERGE_RANK_SECOND, TOKEN_CONTRACTION_VE)
+		}
+		if (leftToken == Gpt2VocabularyFixture.TOKEN_BYTE_APOSTROPHE &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_L) {
+			SetMatch(MERGE_RANK_FIRST, TOKEN_CONTRACTION_APOSTROPHE_L)
+		}
+		if (leftToken == TOKEN_CONTRACTION_APOSTROPHE_L &&
+			rightToken == Gpt2VocabularyFixture.TOKEN_BYTE_L) {
+			SetMatch(MERGE_RANK_SECOND, TOKEN_CONTRACTION_LL)
+		}
+	}
+
+	/**
+	 * Returns whether the last pair has a merge rule.
+	 */
+	override fn HasMerge() bool { return found }
+
+	/**
+	 * Returns the rank of the last matching rule.
+	 */
+	override fn GetRank() int { return rank }
+
+	/**
+	 * Returns the token produced by the last matching rule.
+	 */
+	override fn GetMergedToken() int { return mergedToken }
+
+	/**
+	 * Stores one fixture match.
+	 */
+	fn SetMatch(matchRank: int, resultToken: int)
+	{
+		found = true
+		rank = matchRank
+		mergedToken = resultToken
+	}
+}
+
+/**
+ * Verifies bounded GPT-2 ASCII pre-tokenization and BPE composition.
+ */
+@Test
+component Gpt2BpeTokenizer64Test
+{
+	const HELLO_WORLD_INPUT_LENGTH: int = 13
+	const HELLO_WORLD_TOKEN_COUNT: int = 4
+	const CONTRACTION_INPUT_LENGTH: int = 4
+	const CONTRACTION_TOKEN_COUNT: int = 3
+	const REPEATED_SPACE_INPUT_LENGTH: int = 3
+	const REPEATED_SPACE_TOKEN_COUNT: int = 3
+	const TAB_INPUT_LENGTH: int = 2
+	const TAB_TOKEN_COUNT: int = 2
+	const TRAILING_WHITESPACE_INPUT_LENGTH: int = 3
+	const TRAILING_WHITESPACE_TOKEN_COUNT: int = 3
+	const CLASS_RUN_INPUT_LENGTH: int = 4
+	const CLASS_RUN_TOKEN_COUNT: int = 4
+	const ASCII_TAB: byte = 0x09
+	const ASCII_LINE_FEED: byte = 0x0a
+	const ASCII_SPACE: byte = 0x20
+	const ASCII_APOSTROPHE: byte = 0x27
+	const ASCII_D: byte = 0x64
+	const ASCII_E: byte = 0x65
+	const ASCII_L: byte = 0x6c
+	const ASCII_M: byte = 0x6d
+	const ASCII_R: byte = 0x72
+	const ASCII_S: byte = 0x73
+	const ASCII_T: byte = 0x74
+	const ASCII_V: byte = 0x76
+	const ASCII_A: byte = 0x61
+	const ASCII_UPPERCASE_S: byte = 0x53
+	const HELLO_WORLD_INPUT: byte[13] = "Hello, world!".Encode()
+	const HELLO_WORLD_TOKENS: int[4] = [
+		Gpt2VocabularyFixture.TOKEN_HELLO,
+		Gpt2VocabularyFixture.TOKEN_COMMA,
+		Gpt2VocabularyFixture.TOKEN_WORLD_WITH_LEADING_SPACE,
+		Gpt2VocabularyFixture.TOKEN_EXCLAMATION,
+	]
+	const CONTRACTION_INPUT: byte[4] = "it's".Encode()
+	const CONTRACTION_TOKENS: int[3] = [
+		Gpt2VocabularyFixture.TOKEN_BYTE_I,
+		Gpt2VocabularyFixture.TOKEN_BYTE_T,
+		Gpt2MergeFixture.TOKEN_CONTRACTION_S,
+	]
+	const REPEATED_SPACE_INPUT: byte[3] = "  a".Encode()
+	const REPEATED_SPACE_TOKENS: int[3] = [
+		Gpt2VocabularyFixture.TOKEN_BYTE_SPACE,
+		Gpt2VocabularyFixture.TOKEN_BYTE_SPACE,
+		Gpt2VocabularyFixture.TOKEN_BYTE_A,
+	]
+	const TAB_INPUT: byte[2] = [ASCII_TAB, ASCII_A]
+	const TAB_TOKENS: int[2] = [
+		Gpt2VocabularyFixture.TOKEN_BYTE_TAB,
+		Gpt2VocabularyFixture.TOKEN_BYTE_A,
+	]
+	const TRAILING_WHITESPACE_INPUT: byte[3] = [ASCII_A, ASCII_SPACE, ASCII_LINE_FEED]
+	const TRAILING_WHITESPACE_TOKENS: int[3] = [
+		Gpt2VocabularyFixture.TOKEN_BYTE_A,
+		Gpt2VocabularyFixture.TOKEN_BYTE_SPACE,
+		Gpt2VocabularyFixture.TOKEN_BYTE_LINE_FEED,
+	]
+	const CLASS_RUN_INPUT: byte[4] = "12!!".Encode()
+	const CLASS_RUN_TOKENS: int[4] = [
+		Gpt2VocabularyFixture.TOKEN_BYTE_DIGIT_ONE,
+		Gpt2VocabularyFixture.TOKEN_BYTE_DIGIT_TWO,
+		Gpt2VocabularyFixture.TOKEN_EXCLAMATION,
+		Gpt2VocabularyFixture.TOKEN_EXCLAMATION,
+	]
+	const UNKNOWN_ASCII_INPUT: byte = 0x00
+	const NON_ASCII_INPUT: byte = 0x80
+
+	vocabulary: Gpt2VocabularyFixture
+	mergeTable: Gpt2MergeFixture
+	tokenizer: Gpt2BpeTokenizer64
+
+	/**
+	 * Connects the tokenizer to deterministic vocabulary and merge fixtures.
+	 */
+	new()
+	{
+		this.vocabulary = new Gpt2VocabularyFixture()
+		this.mergeTable = new Gpt2MergeFixture()
+		this.tokenizer = new Gpt2BpeTokenizer64(this.vocabulary, this.mergeTable)
+	}
+
+	/**
+	 * Verifies the standard GPT-2 ASCII conformance example.
+	 */
+	@Test
+	fn TokenizesHelloWorld()
+	{
+		this.tokenizer.Reset()
+		for (var index = 0; index < HELLO_WORLD_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(HELLO_WORLD_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == HELLO_WORLD_TOKEN_COUNT
+		for (var index = 0; index < HELLO_WORLD_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == HELLO_WORLD_TOKENS[index]
+		}
+	}
+
+	/**
+	 * Verifies that contraction and leading-space boundaries prevent cross merges.
+	 */
+	@Test
+	fn PreservesGpt2PieceBoundaries()
+	{
+		this.tokenizer.Reset()
+		for (var index = 0; index < CONTRACTION_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(CONTRACTION_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == CONTRACTION_TOKEN_COUNT
+		for (var index = 0; index < CONTRACTION_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == CONTRACTION_TOKENS[index]
+		}
+
+		this.tokenizer.Reset()
+		for (var index = 0; index < REPEATED_SPACE_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(REPEATED_SPACE_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == REPEATED_SPACE_TOKEN_COUNT
+		for (var index = 0; index < REPEATED_SPACE_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == REPEATED_SPACE_TOKENS[index]
+		}
+	}
+
+	/**
+	 * Verifies that non-space whitespace cannot prefix a following text run.
+	 */
+	@Test
+	fn KeepsTabSeparateFromFollowingText()
+	{
+		this.tokenizer.Reset()
+		for (var index = 0; index < TAB_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(TAB_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == TAB_TOKEN_COUNT
+		for (var index = 0; index < TAB_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == TAB_TOKENS[index]
+		}
+	}
+
+	/**
+	 * Verifies empty input and invalid output indexes without reporting failure.
+	 */
+	@Test
+	fn HandlesEmptyInputAndInvalidIndexes()
+	{
+		this.tokenizer.Reset()
+		this.tokenizer.Tokenize()
+
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetInputLength() == 0
+		assert this.tokenizer.GetTokenCount() == 0
+		assert this.tokenizer.GetToken(-1) == 0
+		assert this.tokenizer.GetToken(0) == 0
+	}
+
+	/**
+	 * Verifies the exact input bound, overflow rejection, and Reset recovery.
+	 */
+	@Test
+	fn EnforcesInputCapacityAndRecoversAfterReset()
+	{
+		this.tokenizer.Reset()
+		for (var index = 0; index < Gpt2BpeTokenizer64.MAX_INPUT_BYTES; index++) {
+			assert this.tokenizer.AcceptAscii(ASCII_A) == true
+		}
+		assert this.tokenizer.GetInputLength() == Gpt2BpeTokenizer64.MAX_INPUT_BYTES
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == Gpt2BpeTokenizer64.MAX_OUTPUT_TOKENS
+
+		assert this.tokenizer.AcceptAscii(ASCII_A) == false
+		assert this.tokenizer.HasError() == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == 0
+
+		this.tokenizer.Reset()
+		assert this.tokenizer.AcceptAscii(ASCII_A) == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == 1
+		assert this.tokenizer.GetToken(0) == Gpt2VocabularyFixture.TOKEN_BYTE_A
+	}
+
+	/**
+	 * Verifies trailing whitespace plus separate number and punctuation runs.
+	 */
+	@Test
+	fn TokenizesWhitespaceAndCharacterClassRuns()
+	{
+		this.tokenizer.Reset()
+		for (var index = 0; index < TRAILING_WHITESPACE_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(TRAILING_WHITESPACE_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == TRAILING_WHITESPACE_TOKEN_COUNT
+		for (var index = 0; index < TRAILING_WHITESPACE_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == TRAILING_WHITESPACE_TOKENS[index]
+		}
+
+		this.tokenizer.Reset()
+		for (var index = 0; index < CLASS_RUN_INPUT_LENGTH; index++) {
+			assert this.tokenizer.AcceptAscii(CLASS_RUN_INPUT[index]) == true
+		}
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == CLASS_RUN_TOKEN_COUNT
+		for (var index = 0; index < CLASS_RUN_TOKEN_COUNT; index++) {
+			assert this.tokenizer.GetToken(index) == CLASS_RUN_TOKENS[index]
+		}
+	}
+
+	/**
+	 * Verifies all case-insensitive contraction alternatives from GPT-2.
+	 */
+	@Test
+	fn RecognizesAllContractionAlternatives()
+	{
+		AssertTwoByteContraction(ASCII_S, Gpt2MergeFixture.TOKEN_CONTRACTION_S)
+		AssertTwoByteContraction(ASCII_T, Gpt2MergeFixture.TOKEN_CONTRACTION_T)
+		AssertTwoByteContraction(ASCII_M, Gpt2MergeFixture.TOKEN_CONTRACTION_M)
+		AssertTwoByteContraction(ASCII_D, Gpt2MergeFixture.TOKEN_CONTRACTION_D)
+		AssertThreeByteContraction(
+			ASCII_R, ASCII_E, Gpt2MergeFixture.TOKEN_CONTRACTION_RE)
+		AssertThreeByteContraction(
+			ASCII_V, ASCII_E, Gpt2MergeFixture.TOKEN_CONTRACTION_VE)
+		AssertThreeByteContraction(
+			ASCII_L, ASCII_L, Gpt2MergeFixture.TOKEN_CONTRACTION_LL)
+		AssertTwoByteContraction(
+			ASCII_UPPERCASE_S, Gpt2MergeFixture.TOKEN_CONTRACTION_UPPERCASE_S)
+	}
+
+	/**
+	 * Verifies missing byte mappings and non-ASCII input are rejected.
+	 */
+	@Test
+	fn RejectsInvalidInputAndRecoversAfterReset()
+	{
+		this.tokenizer.Reset()
+		assert this.tokenizer.AcceptAscii(UNKNOWN_ASCII_INPUT) == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.HasError() == true
+		assert this.tokenizer.GetTokenCount() == 0
+
+		this.tokenizer.Reset()
+		assert this.tokenizer.AcceptAscii(NON_ASCII_INPUT) == false
+		assert this.tokenizer.HasError() == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.GetTokenCount() == 0
+
+		this.tokenizer.Reset()
+		assert this.tokenizer.HasError() == false
+	}
+
+	/**
+	 * Verifies one two-byte contraction against the synthetic merge table.
+	 */
+	fn AssertTwoByteContraction(second: byte, expectedToken: int)
+	{
+		this.tokenizer.Reset()
+		assert this.tokenizer.AcceptAscii(ASCII_APOSTROPHE) == true
+		assert this.tokenizer.AcceptAscii(second) == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == 1
+		assert this.tokenizer.GetToken(0) == expectedToken
+	}
+
+	/**
+	 * Verifies one three-byte contraction against the synthetic merge table.
+	 */
+	fn AssertThreeByteContraction(second: byte, third: byte, expectedToken: int)
+	{
+		this.tokenizer.Reset()
+		assert this.tokenizer.AcceptAscii(ASCII_APOSTROPHE) == true
+		assert this.tokenizer.AcceptAscii(second) == true
+		assert this.tokenizer.AcceptAscii(third) == true
+		this.tokenizer.Tokenize()
+		assert this.tokenizer.HasError() == false
+		assert this.tokenizer.GetTokenCount() == 1
+		assert this.tokenizer.GetToken(0) == expectedToken
+	}
+}
