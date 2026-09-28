@@ -1,0 +1,51 @@
+namespace Eccelerators.Tokenization.Unigram
+/** Printable ASCII normalization, collapse spaces, UTF-8 U+2581 Metaspace.
+ * Leading/trailing single spaces are preserved; add-prefix-space is always on.
+ * Model-specific nonblank/special token rejection belongs to the caller.
+ */
+component AsciiMetaspace<MAX_INPUT: int, MAX_BYTES: int, MAP: IAsciiNormalization> {
+ static assert MAX_INPUT > 0 && MAX_INPUT <= 4096, "invalid input capacity"
+ static assert MAX_BYTES >= 3 * MAX_INPUT + 3 && MAX_BYTES <= 16384, "unsafe normalized capacity"
+ map: MAP
+ data: byte[MAX_BYTES]
+ length: int
+ inputs: int
+ space: bool
+ error: bool
+ new(map: MAP) { this.map = map }
+ public fn Reset() { length = 0
+  inputs = 0
+  space = false
+  error = false }
+ fn Marker() { data[length] = 0xe2
+  data[length + 1] = 0x96
+  data[length + 2] = 0x81
+  length += 3 }
+ public fn Accept(value: byte) bool {
+  if (error) { return false }
+  if (value < 0x20 || value > 0x7e || inputs >= MAX_INPUT) { error = true
+   length = 0
+   return false }
+  inputs++
+  var v = map.Map(value)
+  if (v < 32 || v > 126) { error = true
+   length = 0
+   return false }
+  if (v == 32) {
+   if (!space) { Marker() }
+   space = true
+  } else {
+   if (length == 0) { Marker() }
+   data[length] = v as byte
+   length++
+   space = false
+  }
+  return true
+ }
+ public fn Length() int { return length }
+ public fn Read(index: int) byte {
+  if (index < 0 || index >= length || error) { return 0x00 }
+  return data[index]
+ }
+ public fn Failed() bool { return error }
+}

@@ -354,12 +354,13 @@ component Gpt2BpeTokenizer64Test
 		Gpt2VocabularyFixture.TOKEN_BYTE_SPACE,
 		Gpt2VocabularyFixture.TOKEN_BYTE_A,
 	]
-	const TAB_INPUT: byte[2] = [ASCII_TAB, ASCII_A]
+	// Literal bytes avoid a named-byte aggregate codegen defect; fixture unchanged.
+	const TAB_INPUT: byte[2] = [0x09, 0x61]
 	const TAB_TOKENS: int[2] = [
 		Gpt2VocabularyFixture.TOKEN_BYTE_TAB,
 		Gpt2VocabularyFixture.TOKEN_BYTE_A,
 	]
-	const TRAILING_WHITESPACE_INPUT: byte[3] = [ASCII_A, ASCII_SPACE, ASCII_LINE_FEED]
+	const TRAILING_WHITESPACE_INPUT: byte[3] = [0x61, 0x20, 0x0a]
 	const TRAILING_WHITESPACE_TOKENS: int[3] = [
 		Gpt2VocabularyFixture.TOKEN_BYTE_A,
 		Gpt2VocabularyFixture.TOKEN_BYTE_SPACE,

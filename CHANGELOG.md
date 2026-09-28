@@ -16,3 +16,10 @@ All notable changes to `Eccelerators.Tokenization` are recorded here.
   checker for standard and custom GPT-2-style byte-level BPE models.
 - Document package architecture, storage ownership, integration, and hardware
   tradeoffs.
+
+## 0.2.0-dev
+
+- Add generic exact-cost Unigram segmentation and vocabulary providers.
+- Add bounded ASCII normalization/Metaspace processing and UTF-8 decoding.
+- Add two-configuration regressions; retain existing GPT-2/BPE behavior.
+- Use equivalent literal bytes in two existing test arrays for compiler compatibility.

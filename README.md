@@ -28,7 +28,7 @@ appropriately licensed tokenizer files.
 
 ```toml
 [dependencies]
-"Eccelerators.Tokenization" = "0.1.0"
+"Eccelerators.Tokenization" = "0.2.0-dev"
 ```
 
 The package has no runtime dependency on a processor or software tokenizer.
@@ -218,3 +218,10 @@ Source namespaces mirror their folders. Test namespaces use
 ## 📄 License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+## Unigram extension (0.2.0-dev)
+
+See [the generic Unigram contracts and bounds](docs/unigram.md) for exact-cost
+segmentation, injectable ASCII normalization and UTF-8 Metaspace decoding.
+Existing GPT-2/BPE APIs remain available unchanged. The development version is
+used by the FLAN-T5 integration and awaits user publication.

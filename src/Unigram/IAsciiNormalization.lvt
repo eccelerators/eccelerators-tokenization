@@ -1,0 +1,5 @@
+namespace Eccelerators.Tokenization.Unigram
+/** A verified one-byte normalization subset. Map returns printable ASCII or -1.
+ * This deliberately does not claim arbitrary Unicode normalization support.
+ */
+interface IAsciiNormalization { fn Map(value: byte) int }

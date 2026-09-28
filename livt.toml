@@ -1,6 +1,6 @@
 [project]
 name = "Eccelerators.Tokenization"
-version = "0.1.0"
+version = "0.2.0-dev"
 path = "src"
 outdir = "out"
 
@@ -9,7 +9,8 @@ path = "tests"
 components = [
     "BpeMergeEngine64Test",
     "Gpt2BpeTokenizer64Test",
-    "Gpt2BpeDecoder128Test"
+    "Gpt2BpeDecoder128Test",
+    "UnigramTest"
 ]
 
 [build.debug]

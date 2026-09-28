@@ -1,0 +1,18 @@
+namespace Eccelerators.Tokenization.Unigram
+/** Byte trie and exact nonnegative additive costs (negative log scores).
+ * Costs must be <= 2^40; caller chooses a common exact scale. No rounding here.
+ * Next returns -1 when absent. Failed distinguishes absent data from I/O failure.
+ * TokenFlags: bit0 special (skipped on decode), bit1 unassigned (also skipped).
+ * UTF-8 pieces must be valid; no byte fallback. Unknowns fuse within a segment.
+ */
+interface IUnigramVocabulary {
+ fn Next(node: int, value: byte) int
+ fn Terminal(node: int) int
+ fn Cost(token: int) logic[64]
+ fn Unknown() int
+ fn UnknownCost() logic[64]
+ fn TokenLength(token: int) int
+ fn TokenByte(token: int, index: int) byte
+ fn TokenFlags(token: int) int
+ fn Failed() bool
+}
