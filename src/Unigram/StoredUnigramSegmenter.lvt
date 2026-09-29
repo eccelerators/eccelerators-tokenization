@@ -1,0 +1,342 @@
+namespace Eccelerators.Tokenization.Unigram
+
+/**
+ * Runs exact Viterbi on one pre-tokenized UTF-8 segment at a time.
+ * Borrows vocabulary and exclusive workspace of 5*MAX_BYTES+3+2*MAX_TOKENS 64-bit words.
+ * All reachable cells are written before reading; physical storage need not start cleared.
+ * Strict improvement preserves the first path on ties; unknown runs fuse within a segment.
+ * Output accumulates until Reset; failure invalidates all output. Logical Reset changes metadata;
+ * hardware reset must cancel outstanding consumer/provider transactions together.
+ * All public calls are serialized by the caller.
+ */
+component StoredUnigramSegmenter<MAX_BYTES: int, MAX_TOKENS: int, VOCAB: IUnigramVocabulary, STORAGE: IUnigramStorage>
+{
+	static assert MAX_BYTES > 0 && MAX_BYTES <= 4096, "invalid segment capacity"
+
+	static assert MAX_TOKENS > 0 && MAX_TOKENS <= 4096, "invalid token capacity"
+
+	// One dynamic-programming boundary per byte plus the final boundary.
+	const SLOTS: int = MAX_BYTES + 1
+
+	// Word offsets for input, path costs, signed predecessors, IDs and UTF-8 widths.
+	const DATA: int = 0
+	const COSTS: int = MAX_BYTES
+	const PREVIOUS: int = COSTS + SLOTS
+	const IDS: int = PREVIOUS + SLOTS
+	const WIDTHS: int = IDS + SLOTS
+
+	// Bounded backtracking scratch and accumulated output IDs.
+	const REVERSE: int = WIDTHS + MAX_BYTES
+	const OUTPUT: int = REVERSE + MAX_TOKENS
+
+	// Minimum contiguous workspace capacity in 64-bit words.
+	public const STORAGE_WORDS: int = OUTPUT + MAX_TOKENS
+
+	// Borrowed vocabulary and exclusively held 64-bit workspace.
+	vocab: VOCAB
+	storage: STORAGE
+
+	// Current segment bytes, accumulated output IDs and sticky request failure.
+	length: int
+	count: int
+	error: bool
+
+	/**
+	 * Borrows vocabulary and exclusive 64-bit workspace in one clock/reset context.
+	 * Storage must cover 0..STORAGE_WORDS-1; cells may be uninitialized. Reset starts a request.
+	 */
+	new(vocab: VOCAB, storage: STORAGE)
+	{
+		this.vocab = vocab
+		this.storage = storage
+	}
+
+	/**
+	 * Reads the low 32 bits of one workspace word as a signed int.
+	 * The explicit intermediate width preserves negative predecessor sentinels.
+	 */
+	fn ReadInt(address: int) int
+	{
+		var raw: logic[64] = storage.Read(address)
+		var word: logic[32] = raw as logic[32]
+		return word as int
+	}
+
+	/**
+	 * Stores the exact low 32-bit representation of a signed int in a workspace word.
+	 * ReadInt restores signed interpretation; upper bits are zero.
+	 */
+	fn WriteInt(address: int, value: int)
+	{
+		storage.Write(address, (value as uint) as logic[64])
+	}
+
+	/**
+	 * Discards both the current segment and all accumulated token IDs, and clears sticky failure.
+	 * Does not clear workspace or reset vocabulary/provider state. Calls must be serialized;
+	 * hardware cancellation requires shared context reset with the storage provider.
+	 */
+	public fn Reset()
+	{
+		length = 0
+		count = 0
+		error = false
+	}
+
+	/**
+	 * Discards current input bytes while retaining accumulated tokens and any sticky failure.
+	 * Use at pre-tokenizer boundaries; this does not recover a failed request.
+	 */
+	public fn BeginSegment()
+	{
+		length = 0
+	}
+
+	/**
+	 * Latches failure and invalidates accumulated token IDs; returns false for propagation.
+	 */
+	fn Fail() bool
+	{
+		error = true
+		count = 0
+		return false
+	}
+
+	/**
+	 * Waits for one byte to be stored in the current segment, up to MAX_BYTES.
+	 * Checks required contiguous workspace capacity before access. Overflow or short storage
+	 * invalidates all accumulated tokens and returns false; UTF-8 validation occurs in EncodeSegment.
+	 */
+	public fn Accept(value: byte) bool
+	{
+		if (error || !storage.IsValidAddress(STORAGE_WORDS - 1) || length >= MAX_BYTES) {
+			return Fail()
+		}
+
+		storage.Write(DATA + length, value as logic[64])
+		length++
+		return true
+	}
+
+	/**
+	 * Considers an edge from initialized start to end with a nonnegative token ID and cost <= 2^40.
+	 * Accumulates four unsigned 16-bit limbs exactly; bounded paths fit within 2^52.
+	 * Updates cost/predecessor/ID only on strict improvement, preserving the first path on ties.
+	 * Returns false for an invalid ID/cost; callers supply reachable codepoint boundaries.
+	 */
+	fn Candidate(start: int, end: int, id: int, cost: logic[64]) bool
+	{
+		if (id < 0 || cost > (1 as logic[64] << 40)) {
+			return false
+		}
+
+		var total: logic[64] = 0
+		var carry = 0
+		var prior = storage.Read(COSTS + start)
+
+		for (var limb = 0; limb < 4; limb++) {
+			var shift = limb * 16
+			var priorLimb: logic[16] = (prior >> shift) as logic[16]
+			var costLimb: logic[16] = (cost >> shift) as logic[16]
+			var sum = priorLimb as int + costLimb as int + carry
+			total = total | ((sum & 65535) as logic[64] << shift)
+			carry = sum >> 16
+		}
+
+		var better = true
+
+		if (ReadInt(PREVIOUS + end) >= 0) {
+			better = total < storage.Read(COSTS + end)
+		}
+
+		if (better) {
+			storage.Write(COSTS + end, total)
+			WriteInt(PREVIOUS + end, start)
+			WriteInt(IDS + end, id)
+		}
+
+		return true
+	}
+
+	/**
+	 * Validates a nonempty UTF-8 segment and waits for exact-cost Viterbi/backtracking to finish.
+	 * Appends IDs to the request output, fusing adjacent unknowns only within this segment.
+	 * True clears segment bytes for reuse; false invalidates every output and requires Reset.
+	 * The caller owns pre-tokenizer boundaries and must not run concurrent provider operations.
+	 */
+	public fn EncodeSegment() bool
+	{
+		if (error || length == 0) {
+			return Fail()
+		}
+
+		for (var i = 0; i <= length; i++) {
+			WriteInt(PREVIOUS + i, -1)
+		}
+
+		var p = 0
+
+		while (p < length) {
+			var b = storage.Read(DATA + p) as int
+			var n = 0
+
+			if (b < 128) {
+				n = 1
+			}
+
+			if (b >= 194 && b <= 223) {
+				n = 2
+			}
+
+			if (b >= 224 && b <= 239) {
+				n = 3
+			}
+
+			if (b >= 240 && b <= 244) {
+				n = 4
+			}
+
+			if (n == 0) {
+				return Fail()
+			}
+
+			if (p + n > length) {
+				return Fail()
+			}
+
+			for (var j = 1; j < n; j++) {
+				var c = storage.Read(DATA + p + j) as int
+
+				if (c < 128 || c > 191) {
+					return Fail()
+				}
+			}
+
+			if (n >= 3) {
+				var c = storage.Read(DATA + p + 1) as int
+
+				if ((b == 224 && c < 160) || (b == 237 && c >= 160) || (b == 240 && c < 144) || (b == 244 && c >= 144)) {
+					return Fail()
+				}
+			}
+
+			WriteInt(WIDTHS + p, n)
+
+			for (var j = 1; j < n; j++) {
+				WriteInt(WIDTHS + p + j, 0)
+			}
+
+			p += n
+		}
+
+		storage.Write(COSTS, 0)
+		WriteInt(PREVIOUS, 0)
+		p = 0
+
+		while (p < length) {
+			var n = ReadInt(WIDTHS + p)
+			var node = 0
+			var single = false
+			var end = p
+
+			while (end < length && node >= 0) {
+				node = vocab.Next(node, (storage.Read(DATA + end) as byte))
+				end++
+
+				if (node >= 0) {
+					var id = vocab.Terminal(node)
+
+					if (id >= 0 && (end == length || ReadInt(WIDTHS + end) != 0)) {
+						if (!Candidate(p, end, id, vocab.Cost(id))) {
+							return Fail()
+						}
+
+						if (end - p == n) {
+							single = true
+						}
+					}
+				}
+			}
+
+			if (!single) {
+				if (!Candidate(p, p + n, vocab.Unknown(), vocab.UnknownCost())) {
+					return Fail()
+				}
+			}
+
+			p += n
+		}
+
+		if (vocab.Failed()) {
+			return Fail()
+		}
+
+		p = length
+		var size = 0
+		var last = -1
+		var unknown = vocab.Unknown()
+
+		while (p > 0) {
+			var id = ReadInt(IDS + p)
+
+			if (id != unknown || last != unknown) {
+				if (size >= MAX_TOKENS - count) {
+					return Fail()
+				}
+
+				WriteInt(REVERSE + size, id)
+				size++
+			}
+
+			last = id
+			var next = ReadInt(PREVIOUS + p)
+
+			if (next < 0 || next >= p) {
+				return Fail()
+			}
+
+			p = next
+		}
+
+		if (size > MAX_TOKENS - count) {
+			return Fail()
+		}
+
+		for (var i = size - 1; i >= 0; i--) {
+			WriteInt(OUTPUT + count, ReadInt(REVERSE + i))
+			count++
+		}
+
+		length = 0
+		return true
+	}
+
+	/**
+	 * Returns the number of accumulated output IDs, or zero after Reset or failure.
+	 */
+	public fn Count() int
+	{
+		return count
+	}
+
+	/**
+	 * Returns the accumulated token ID at index 0..Count()-1, waiting for workspace access.
+	 * Returns -1 for an invalid index or failed request.
+	 */
+	public fn Token(index: int) int
+	{
+		if (error || index < 0 || index >= count) {
+			return -1
+		}
+
+		return ReadInt(OUTPUT + index)
+	}
+
+	/**
+	 * Reports sticky capacity, UTF-8, vocabulary or path-validation failure since Reset.
+	 */
+	public fn Failed() bool
+	{
+		return error
+	}
+}

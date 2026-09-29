@@ -1,291 +1,874 @@
 namespace Eccelerators.Tokenization.Tests.Unigram
+
 using Eccelerators.Tokenization.Unigram
-component ArrayVocabulary : IUnigramVocabulary {
- wide: bool
- public fn Wide(value: bool) { wide = value }
- const COSTS: int[8] = [0, 1, 1, 2, 1, 1, 0, 1]
- override fn Next(node: int, value: byte) int {
-  if (node == 0 && value == 60) { return 1 }
-  if (node == 0 && value == 97) { return 6 }
-  if (node == 0 && value == 98) { return 7 }
-  if (node == 0 && value == 226) { return 9 }
-  if (node == 0 && value == 195) { return 12 }
-  if (node == 0 && value == 120) { return 18 }
-  if (node == 1 && value == 117) { return 2 }
-  if (node == 1 && value == 112) { return 14 }
-  if (node == 2 && value == 110) { return 3 }
-  if (node == 3 && value == 107) { return 4 }
-  if (node == 4 && value == 62) { return 5 }
-  if (node == 6 && value == 98) { return 8 }
-  if (node == 9 && value == 150) { return 10 }
-  if (node == 10 && value == 129) { return 11 }
-  if (node == 12 && value == 169) { return 13 }
-  if (node == 14 && value == 97) { return 15 }
-  if (node == 15 && value == 100) { return 16 }
-  if (node == 16 && value == 62) { return 17 }
-  return -1
- }
- override fn Terminal(node: int) int {
-  if (node == 5) { return 0 }
-  if (node == 6) { return 1 }
-  if (node == 7) { return 2 }
-  if (node == 8) { return 3 }
-  if (node == 11) { return 4 }
-  if (node == 13) { return 5 }
-  if (node == 17) { return 6 }
-  if (node == 18) { return 7 }
-  return -1
- }
- override fn Cost(token: int) logic[64] {
-  if (wide) { return COSTS[token] as logic[64] << 39 }
-  return COSTS[token] as logic[64]
- }
- override fn Unknown() int { return 0 }
- override fn UnknownCost() logic[64] { return 20 }
- override fn Failed() bool { return false }
- override fn TokenFlags(token: int) int { if (token < 0 || token > 8) { return -1 }
-  if (token == 0 || token == 6) { return 1 }
-  if (token == 8) { return 2 }
-  return 0 }
- override fn TokenLength(token: int) int {
-  if (token == 0) { return 5 }
-  if (token == 1) { return 1 }
-  if (token == 2) { return 1 }
-  if (token == 3) { return 2 }
-  if (token == 4) { return 3 }
-  if (token == 5) { return 2 }
-  if (token == 6) { return 5 }
-  if (token == 7) { return 1 }
-  return -1
- }
- override fn TokenByte(token: int, index: int) byte {
-  if (token == 0 && index == 0) { return 60 }
-  if (token == 0 && index == 1) { return 117 }
-  if (token == 0 && index == 2) { return 110 }
-  if (token == 0 && index == 3) { return 107 }
-  if (token == 0 && index == 4) { return 62 }
-  if (token == 1 && index == 0) { return 97 }
-  if (token == 2 && index == 0) { return 98 }
-  if (token == 3 && index == 0) { return 97 }
-  if (token == 3 && index == 1) { return 98 }
-  if (token == 4 && index == 0) { return 226 }
-  if (token == 4 && index == 1) { return 150 }
-  if (token == 4 && index == 2) { return 129 }
-  if (token == 5 && index == 0) { return 195 }
-  if (token == 5 && index == 1) { return 169 }
-  if (token == 6 && index == 0) { return 60 }
-  if (token == 6 && index == 1) { return 112 }
-  if (token == 6 && index == 2) { return 97 }
-  if (token == 6 && index == 3) { return 100 }
-  if (token == 6 && index == 4) { return 62 }
-  if (token == 7 && index == 0) { return 120 }
-  return 0x00
- }
+
+/**
+ * Synthetic eight-piece trie plus an unassigned slot for Unigram and decoding tests.
+ * Mutable cost modes exercise wide accumulation and a strictly cheaper split path.
+ */
+component ArrayVocabulary : IUnigramVocabulary
+{
+	// Test-selected cost modes; restore them after a scenario.
+	wide: bool
+	split: bool
+
+	/**
+	 * Enables or disables the wide-cost mode in which separate a/b tokens beat the ab piece.
+	 */
+	public fn PreferSplit(value: bool)
+	{
+		split = value
+	}
+
+	/**
+	 * Enables or disables exact costs shifted into high bits for accumulation tests.
+	 */
+	public fn Wide(value: bool)
+	{
+		wide = value
+	}
+
+	// Base exact costs indexed by synthetic token ID.
+	const COSTS: int[8] = [0, 1, 1, 2, 1, 1, 0, 1]
+
+	/**
+	 * Fixture implementation: returns the trie child reached by value from node, or -1 if no edge exists.
+	 * Node 0 is the root. Report table/I/O failures through Failed so absence is distinguishable.
+	 */
+	override fn Next(node: int, value: byte) int
+	{
+		if (node == 0 && value == 60) {
+			return 1
+		}
+
+		if (node == 0 && value == 97) {
+			return 6
+		}
+
+		if (node == 0 && value == 98) {
+			return 7
+		}
+
+		if (node == 0 && value == 226) {
+			return 9
+		}
+
+		if (node == 0 && value == 195) {
+			return 12
+		}
+
+		if (node == 0 && value == 120) {
+			return 18
+		}
+
+		if (node == 1 && value == 117) {
+			return 2
+		}
+
+		if (node == 1 && value == 112) {
+			return 14
+		}
+
+		if (node == 2 && value == 110) {
+			return 3
+		}
+
+		if (node == 3 && value == 107) {
+			return 4
+		}
+
+		if (node == 4 && value == 62) {
+			return 5
+		}
+
+		if (node == 6 && value == 98) {
+			return 8
+		}
+
+		if (node == 9 && value == 150) {
+			return 10
+		}
+
+		if (node == 10 && value == 129) {
+			return 11
+		}
+
+		if (node == 12 && value == 169) {
+			return 13
+		}
+
+		if (node == 14 && value == 97) {
+			return 15
+		}
+
+		if (node == 15 && value == 100) {
+			return 16
+		}
+
+		if (node == 16 && value == 62) {
+			return 17
+		}
+
+		return -1
+	}
+
+	/**
+	 * Fixture implementation: returns the nonnegative token ID ending at node, or -1 for a nonterminal.
+	 * Report malformed records or I/O errors through Failed.
+	 */
+	override fn Terminal(node: int) int
+	{
+		if (node == 5) {
+			return 0
+		}
+
+		if (node == 6) {
+			return 1
+		}
+
+		if (node == 7) {
+			return 2
+		}
+
+		if (node == 8) {
+			return 3
+		}
+
+		if (node == 11) {
+			return 4
+		}
+
+		if (node == 13) {
+			return 5
+		}
+
+		if (node == 17) {
+			return 6
+		}
+
+		if (node == 18) {
+			return 7
+		}
+
+		return -1
+	}
+
+	/**
+	 * Returns the configured synthetic cost for base token 0..7; callers supply a valid fixture ID.
+	 */
+	override fn Cost(token: int) logic[64]
+	{
+		if (split) {
+			if (token == 3) {
+				return 1 as logic[64] << 40
+			}
+
+			return COSTS[token] as logic[64] << 38
+		}
+
+		if (wide) {
+			return COSTS[token] as logic[64] << 39
+		}
+
+		return COSTS[token] as logic[64]
+	}
+
+	/**
+	 * Fixture implementation: returns the nonnegative unknown-token ID used when no single-codepoint piece exists.
+	 */
+	override fn Unknown() int
+	{
+		return 0
+	}
+
+	/**
+	 * Fixture implementation: returns the unknown-token cost in the same exact scale as Cost, at most 2^40.
+	 */
+	override fn UnknownCost() logic[64]
+	{
+		return 20
+	}
+
+	/**
+	 * Always returns false: this deterministic fixture has no I/O failure mode.
+	 */
+	override fn Failed() bool
+	{
+		return false
+	}
+
+	/**
+	 * Fixture implementation: returns flags 0..3: bit 0 marks special IDs, bit 1 unassigned IDs; either skips decoding.
+	 * Invalid IDs must return a negative value or set Failed, not masquerade as unassigned.
+	 */
+	override fn TokenFlags(token: int) int
+	{
+		if (token < 0 || token > 8) {
+			return -1
+		}
+
+		if (token == 0 || token == 6) {
+			return 1
+		}
+
+		if (token == 8) {
+			return 2
+		}
+
+		return 0
+	}
+
+	/**
+	 * Fixture implementation: returns the UTF-8 piece length in bytes for an ordinary token, or a negative value on failure.
+	 * The decoder requires 1..MAX_PIECE bytes and checks Failed for provider errors.
+	 */
+	override fn TokenLength(token: int) int
+	{
+		if (token == 0) {
+			return 5
+		}
+
+		if (token == 1) {
+			return 1
+		}
+
+		if (token == 2) {
+			return 1
+		}
+
+		if (token == 3) {
+			return 2
+		}
+
+		if (token == 4) {
+			return 3
+		}
+
+		if (token == 5) {
+			return 2
+		}
+
+		if (token == 6) {
+			return 5
+		}
+
+		if (token == 7) {
+			return 1
+		}
+
+		return -1
+	}
+
+	/**
+	 * Returns a byte of the synthetic piece for the requested token/index; unsupported pairs return zero.
+	 */
+	override fn TokenByte(token: int, index: int) byte
+	{
+		if (token == 0 && index == 0) {
+			return 60
+		}
+
+		if (token == 0 && index == 1) {
+			return 117
+		}
+
+		if (token == 0 && index == 2) {
+			return 110
+		}
+
+		if (token == 0 && index == 3) {
+			return 107
+		}
+
+		if (token == 0 && index == 4) {
+			return 62
+		}
+
+		if (token == 1 && index == 0) {
+			return 97
+		}
+
+		if (token == 2 && index == 0) {
+			return 98
+		}
+
+		if (token == 3 && index == 0) {
+			return 97
+		}
+
+		if (token == 3 && index == 1) {
+			return 98
+		}
+
+		if (token == 4 && index == 0) {
+			return 226
+		}
+
+		if (token == 4 && index == 1) {
+			return 150
+		}
+
+		if (token == 4 && index == 2) {
+			return 129
+		}
+
+		if (token == 5 && index == 0) {
+			return 195
+		}
+
+		if (token == 5 && index == 1) {
+			return 169
+		}
+
+		if (token == 6 && index == 0) {
+			return 60
+		}
+
+		if (token == 6 && index == 1) {
+			return 112
+		}
+
+		if (token == 6 && index == 2) {
+			return 97
+		}
+
+		if (token == 6 && index == 3) {
+			return 100
+		}
+
+		if (token == 6 && index == 4) {
+			return 62
+		}
+
+		if (token == 7 && index == 0) {
+			return 120
+		}
+
+		return 0x00
+	}
 }
-component BranchVocabulary : IUnigramVocabulary {
- override fn Next(node: int, value: byte) int {
-  if (node == 0 && value == 60) { return 1 }
-  if (node == 0 && value == 97) { return 6 }
-  if (node == 0 && value == 98) { return 7 }
-  if (node == 0 && value == 226) { return 9 }
-  if (node == 0 && value == 195) { return 12 }
-  if (node == 0 && value == 120) { return 18 }
-  if (node == 1 && value == 117) { return 2 }
-  if (node == 1 && value == 112) { return 14 }
-  if (node == 2 && value == 110) { return 3 }
-  if (node == 3 && value == 107) { return 4 }
-  if (node == 4 && value == 62) { return 5 }
-  if (node == 6 && value == 98) { return 8 }
-  if (node == 9 && value == 150) { return 10 }
-  if (node == 10 && value == 129) { return 11 }
-  if (node == 12 && value == 169) { return 13 }
-  if (node == 14 && value == 97) { return 15 }
-  if (node == 15 && value == 100) { return 16 }
-  if (node == 16 && value == 62) { return 17 }
-  return -1
- }
- override fn Terminal(node: int) int {
-  if (node == 5) { return 0 }
-  if (node == 6) { return 1 }
-  if (node == 7) { return 2 }
-  if (node == 8) { return 3 }
-  if (node == 11) { return 4 }
-  if (node == 13) { return 5 }
-  if (node == 17) { return 6 }
-  if (node == 18) { return 7 }
-  return -1
- }
- override fn Cost(token: int) logic[64] {
-  if (token == 3) { return 2 }
-  return 1
- }
- override fn Unknown() int { return 0 }
- override fn UnknownCost() logic[64] { return 20 }
- override fn Failed() bool { return false }
- override fn TokenFlags(token: int) int { if (token < 0 || token > 8) { return -1 }
-  if (token == 0 || token == 6) { return 1 }
-  if (token == 8) { return 2 }
-  return 0 }
- override fn TokenLength(token: int) int {
-  if (token == 0) { return 5 }
-  if (token == 1) { return 1 }
-  if (token == 2) { return 1 }
-  if (token == 3) { return 2 }
-  if (token == 4) { return 3 }
-  if (token == 5) { return 2 }
-  if (token == 6) { return 5 }
-  if (token == 7) { return 1 }
-  return -1
- }
- override fn TokenByte(token: int, index: int) byte {
-  if (token == 0 && index == 0) { return 60 }
-  if (token == 0 && index == 1) { return 117 }
-  if (token == 0 && index == 2) { return 110 }
-  if (token == 0 && index == 3) { return 107 }
-  if (token == 0 && index == 4) { return 62 }
-  if (token == 1 && index == 0) { return 97 }
-  if (token == 2 && index == 0) { return 98 }
-  if (token == 3 && index == 0) { return 97 }
-  if (token == 3 && index == 1) { return 98 }
-  if (token == 4 && index == 0) { return 226 }
-  if (token == 4 && index == 1) { return 150 }
-  if (token == 4 && index == 2) { return 129 }
-  if (token == 5 && index == 0) { return 195 }
-  if (token == 5 && index == 1) { return 169 }
-  if (token == 6 && index == 0) { return 60 }
-  if (token == 6 && index == 1) { return 112 }
-  if (token == 6 && index == 2) { return 97 }
-  if (token == 6 && index == 3) { return 100 }
-  if (token == 6 && index == 4) { return 62 }
-  if (token == 7 && index == 0) { return 120 }
-  return 0x00
- }
+
+/**
+ * Branch-backed synthetic vocabulary providing the second Unigram test configuration.
+ * Shares piece bytes/IDs with ArrayVocabulary but keeps costs explicit.
+ */
+component BranchVocabulary : IUnigramVocabulary
+{
+	/**
+	 * Fixture implementation: returns the trie child reached by value from node, or -1 if no edge exists.
+	 * Node 0 is the root. Report table/I/O failures through Failed so absence is distinguishable.
+	 */
+	override fn Next(node: int, value: byte) int
+	{
+		if (node == 0 && value == 60) {
+			return 1
+		}
+
+		if (node == 0 && value == 97) {
+			return 6
+		}
+
+		if (node == 0 && value == 98) {
+			return 7
+		}
+
+		if (node == 0 && value == 226) {
+			return 9
+		}
+
+		if (node == 0 && value == 195) {
+			return 12
+		}
+
+		if (node == 0 && value == 120) {
+			return 18
+		}
+
+		if (node == 1 && value == 117) {
+			return 2
+		}
+
+		if (node == 1 && value == 112) {
+			return 14
+		}
+
+		if (node == 2 && value == 110) {
+			return 3
+		}
+
+		if (node == 3 && value == 107) {
+			return 4
+		}
+
+		if (node == 4 && value == 62) {
+			return 5
+		}
+
+		if (node == 6 && value == 98) {
+			return 8
+		}
+
+		if (node == 9 && value == 150) {
+			return 10
+		}
+
+		if (node == 10 && value == 129) {
+			return 11
+		}
+
+		if (node == 12 && value == 169) {
+			return 13
+		}
+
+		if (node == 14 && value == 97) {
+			return 15
+		}
+
+		if (node == 15 && value == 100) {
+			return 16
+		}
+
+		if (node == 16 && value == 62) {
+			return 17
+		}
+
+		return -1
+	}
+
+	/**
+	 * Fixture implementation: returns the nonnegative token ID ending at node, or -1 for a nonterminal.
+	 * Report malformed records or I/O errors through Failed.
+	 */
+	override fn Terminal(node: int) int
+	{
+		if (node == 5) {
+			return 0
+		}
+
+		if (node == 6) {
+			return 1
+		}
+
+		if (node == 7) {
+			return 2
+		}
+
+		if (node == 8) {
+			return 3
+		}
+
+		if (node == 11) {
+			return 4
+		}
+
+		if (node == 13) {
+			return 5
+		}
+
+		if (node == 17) {
+			return 6
+		}
+
+		if (node == 18) {
+			return 7
+		}
+
+		return -1
+	}
+
+	/**
+	 * Returns the configured synthetic cost for base token 0..7; callers supply a valid fixture ID.
+	 */
+	override fn Cost(token: int) logic[64]
+	{
+		if (token == 3) {
+			return 2
+		}
+
+		return 1
+	}
+
+	/**
+	 * Fixture implementation: returns the nonnegative unknown-token ID used when no single-codepoint piece exists.
+	 */
+	override fn Unknown() int
+	{
+		return 0
+	}
+
+	/**
+	 * Fixture implementation: returns the unknown-token cost in the same exact scale as Cost, at most 2^40.
+	 */
+	override fn UnknownCost() logic[64]
+	{
+		return 20
+	}
+
+	/**
+	 * Always returns false: this deterministic fixture has no I/O failure mode.
+	 */
+	override fn Failed() bool
+	{
+		return false
+	}
+
+	/**
+	 * Fixture implementation: returns flags 0..3: bit 0 marks special IDs, bit 1 unassigned IDs; either skips decoding.
+	 * Invalid IDs must return a negative value or set Failed, not masquerade as unassigned.
+	 */
+	override fn TokenFlags(token: int) int
+	{
+		if (token < 0 || token > 8) {
+			return -1
+		}
+
+		if (token == 0 || token == 6) {
+			return 1
+		}
+
+		if (token == 8) {
+			return 2
+		}
+
+		return 0
+	}
+
+	/**
+	 * Fixture implementation: returns the UTF-8 piece length in bytes for an ordinary token, or a negative value on failure.
+	 * The decoder requires 1..MAX_PIECE bytes and checks Failed for provider errors.
+	 */
+	override fn TokenLength(token: int) int
+	{
+		if (token == 0) {
+			return 5
+		}
+
+		if (token == 1) {
+			return 1
+		}
+
+		if (token == 2) {
+			return 1
+		}
+
+		if (token == 3) {
+			return 2
+		}
+
+		if (token == 4) {
+			return 3
+		}
+
+		if (token == 5) {
+			return 2
+		}
+
+		if (token == 6) {
+			return 5
+		}
+
+		if (token == 7) {
+			return 1
+		}
+
+		return -1
+	}
+
+	/**
+	 * Returns a byte of the synthetic piece for the requested token/index; unsupported pairs return zero.
+	 */
+	override fn TokenByte(token: int, index: int) byte
+	{
+		if (token == 0 && index == 0) {
+			return 60
+		}
+
+		if (token == 0 && index == 1) {
+			return 117
+		}
+
+		if (token == 0 && index == 2) {
+			return 110
+		}
+
+		if (token == 0 && index == 3) {
+			return 107
+		}
+
+		if (token == 0 && index == 4) {
+			return 62
+		}
+
+		if (token == 1 && index == 0) {
+			return 97
+		}
+
+		if (token == 2 && index == 0) {
+			return 98
+		}
+
+		if (token == 3 && index == 0) {
+			return 97
+		}
+
+		if (token == 3 && index == 1) {
+			return 98
+		}
+
+		if (token == 4 && index == 0) {
+			return 226
+		}
+
+		if (token == 4 && index == 1) {
+			return 150
+		}
+
+		if (token == 4 && index == 2) {
+			return 129
+		}
+
+		if (token == 5 && index == 0) {
+			return 195
+		}
+
+		if (token == 5 && index == 1) {
+			return 169
+		}
+
+		if (token == 6 && index == 0) {
+			return 60
+		}
+
+		if (token == 6 && index == 1) {
+			return 112
+		}
+
+		if (token == 6 && index == 2) {
+			return 97
+		}
+
+		if (token == 6 && index == 3) {
+			return 100
+		}
+
+		if (token == 6 && index == 4) {
+			return 62
+		}
+
+		if (token == 7 && index == 0) {
+			return 120
+		}
+
+		return 0x00
+	}
 }
-component IdentityAscii : IAsciiNormalization { override fn Map(value: byte) int { return value as int } }
-component LowerAscii : IAsciiNormalization { override fn Map(value: byte) int { if (value >= 0x41 && value <= 0x5a) { return (value as int) + 32 }
- return value as int } }
+
+/**
+ * Test normalization provider that preserves each supplied byte as an int.
+ */
+component IdentityAscii : IAsciiNormalization
+{
+	/**
+	 * Returns value unchanged as an int; callers supply printable ASCII.
+	 */
+	override fn Map(value: byte) int
+	{
+		return value as int
+	}
+}
+
+/**
+ * Test normalization provider that lowercases ASCII A..Z and preserves other bytes.
+ */
+component LowerAscii : IAsciiNormalization
+{
+	/**
+	 * Lowercases ASCII A..Z, otherwise returns value unchanged as an int.
+	 */
+	override fn Map(value: byte) int
+	{
+		if (value >= 0x41 && value <= 0x5a) {
+			return (value as int) + 32
+		}
+
+		return value as int
+	}
+}
+
+/**
+ * Checks array-backed compatibility APIs with two capacity/vocabulary configurations.
+ * Covers exact costs, UTF-8, unknown fusion, failure invalidation and request reset.
+ */
 @Test
-component UnigramTest {
- identity: IdentityAscii
- lowercase: LowerAscii
- a: ArrayVocabulary
- b: BranchVocabulary
- small: UnigramSegmenter<8, 4, ArrayVocabulary>
- large: UnigramSegmenter<32, 16, BranchVocabulary>
- norm: AsciiMetaspace<4, 15, IdentityAscii>
- lower: AsciiMetaspace<16, 51, LowerAscii>
- decoder: MetaspaceDecoder<8, 5, ArrayVocabulary>
- other: MetaspaceDecoder<32, 5, BranchVocabulary>
- new() { identity = new IdentityAscii()
-  lowercase = new LowerAscii()
-  a = new ArrayVocabulary()
-  b = new BranchVocabulary()
-  small = new UnigramSegmenter<8, 4, ArrayVocabulary>(a)
-  large = new UnigramSegmenter<32, 16, BranchVocabulary>(b)
-  norm = new AsciiMetaspace<4, 15, IdentityAscii>(identity)
-  lower = new AsciiMetaspace<16, 51, LowerAscii>(lowercase)
-  decoder = new MetaspaceDecoder<8, 5, ArrayVocabulary>(a)
-  other = new MetaspaceDecoder<32, 5, BranchVocabulary>(b) }
- @Test fn ViterbiTiesUnknownFusionAndRepeatedSegments() {
-  small.Reset()
-  assert small.Accept(0x61)
-  assert small.Accept(0x62)
-  assert small.EncodeSegment()
-  assert small.Count() == 1
-  assert small.Token(0) == 3
-  small.BeginSegment()
-  assert small.Accept(0x7e)
-  assert small.Accept(0x7e)
-  assert small.EncodeSegment()
-  assert small.Count() == 2
-  assert small.Token(1) == 0
-  small.BeginSegment()
-  assert small.Accept(0x7e)
-  assert small.EncodeSegment()
-  assert small.Count() == 3
-  large.Reset()
-  assert large.Accept(0x61)
-  assert large.Accept(0x62)
-  assert large.EncodeSegment()
-  assert large.Token(0) == 3
-  large.BeginSegment()
-  assert large.Accept(0xc3)
-  assert large.Accept(0xa9)
-  assert large.EncodeSegment()
-  assert large.Token(1) == 5
- }
- @Test fn ExactWideCostAccumulation() {
-  a.Wide(true)
-  small.Reset()
-  assert small.Accept(0x61)
-  assert small.Accept(0x62)
-  assert small.Accept(0x61)
-  assert small.Accept(0x62)
-  assert small.EncodeSegment()
-  assert small.Count() == 2
-  assert small.Token(0) == 3
-  assert small.Token(1) == 3
-  a.Wide(false)
- }
- @Test fn InvalidUtf8CapacityAndReset() {
-  small.Reset()
-  assert small.Accept(0xc0)
-  assert !small.EncodeSegment()
-  assert small.Failed()
-  assert small.Count() == 0
-  small.Reset()
-  for (var i = 0; i < 8; i++) { assert small.Accept(0x61) }
-  assert !small.Accept(0x61)
-  assert !small.EncodeSegment()
-  small.Reset()
-  for (var i = 0; i < 5; i++) { assert small.Accept(0x61) }
-  assert !small.EncodeSegment()
-  assert small.Count() == 0
-  small.Reset()
-  assert small.Accept(0x61)
-  assert small.EncodeSegment()
-  assert small.Count() == 1
- }
- @Test fn NormalizationBoundsAndAlternateProvider() {
-  norm.Reset()
-  assert norm.Accept(0x20)
-  assert norm.Accept(0x20)
-  assert norm.Accept(0x61)
-  assert norm.Accept(0x20)
-  assert norm.Length() == 7
-  assert norm.Read(0) == 0xe2
-  assert norm.Read(3) == 0x61
-  assert !norm.Accept(0x62)
-  assert norm.Length() == 0
-  norm.Reset()
-  assert !norm.Accept(0x09)
-  lower.Reset()
-  assert lower.Accept(0x41)
-  assert lower.Read(3) == 0x61
-  assert lower.Length() == 4
- }
- @Test fn Utf8DecodeSpecialSlotsAndFailureAtomicity() {
-  decoder.Reset()
-  assert decoder.Append(6)
-  assert decoder.Append(8)
-  assert decoder.Append(4)
-  assert decoder.Length() == 0
-  assert decoder.Append(5)
-  assert decoder.Append(4)
-  assert decoder.Length() == 3
-  assert decoder.Read(0) == 0xc3
-  assert decoder.Read(1) == 0xa9
-  assert decoder.Read(2) == 0x20
-  assert !decoder.Append(-1)
-  assert decoder.Length() == 0
-  assert !decoder.Append(1)
-  decoder.Reset()
-  for (var i = 0; i < 8; i++) { assert decoder.Append(1) }
-  assert !decoder.Append(1)
-  assert decoder.Length() == 0
-  other.Reset()
-  assert other.Append(4)
-  assert other.Append(1)
-  assert other.Length() == 1
- }
+component UnigramTest
+{
+	// Owned vocabulary fixtures and consumers; test methods share these instances.
+	a: ArrayVocabulary
+	b: BranchVocabulary
+	small: UnigramSegmenter<8, 4, ArrayVocabulary>
+	large: UnigramSegmenter<32, 16, BranchVocabulary>
+	norm: AsciiMetaspace<4, 15, IdentityAscii>
+	lower: AsciiMetaspace<16, 51, LowerAscii>
+	decoder: MetaspaceDecoder<8, 5, ArrayVocabulary>
+	other: MetaspaceDecoder<32, 5, BranchVocabulary>
+
+	/**
+	 * Owns two vocabulary fixtures and bounded segmentation, normalization and decoding subjects.
+	 * Each test resets the subjects it uses; tests share this component instance.
+	 */
+	new()
+	{
+		a = new ArrayVocabulary()
+		b = new BranchVocabulary()
+		small = new UnigramSegmenter<8, 4, ArrayVocabulary>(a)
+		large = new UnigramSegmenter<32, 16, BranchVocabulary>(b)
+		norm = new AsciiMetaspace<4, 15, IdentityAscii>(new IdentityAscii())
+		lower = new AsciiMetaspace<16, 51, LowerAscii>(new LowerAscii())
+		decoder = new MetaspaceDecoder<8, 5, ArrayVocabulary>(a)
+		other = new MetaspaceDecoder<32, 5, BranchVocabulary>(b)
+	}
+
+	/**
+	 * Verifies stable Viterbi ties, within-segment unknown fusion and accumulated outputs for both configurations.
+	 */
+	@Test
+	fn ViterbiTiesUnknownFusionAndRepeatedSegments()
+	{
+		small.Reset()
+		assert small.Accept(0x61)
+		assert small.Accept(0x62)
+		assert small.EncodeSegment()
+		assert small.Count() == 1
+		assert small.Token(0) == 3
+		small.BeginSegment()
+		assert small.Accept(0x7e)
+		assert small.Accept(0x7e)
+		assert small.EncodeSegment()
+		assert small.Count() == 2
+		assert small.Token(1) == 0
+		small.BeginSegment()
+		assert small.Accept(0x7e)
+		assert small.EncodeSegment()
+		assert small.Count() == 3
+		large.Reset()
+		assert large.Accept(0x61)
+		assert large.Accept(0x62)
+		assert large.EncodeSegment()
+		assert large.Token(0) == 3
+		large.BeginSegment()
+		assert large.Accept(0xc3)
+		assert large.Accept(0xa9)
+		assert large.EncodeSegment()
+		assert large.Token(1) == 5
+	}
+
+	/**
+	 * Verifies exact high-bit path costs over repeated pieces, then restores the fixture cost mode.
+	 */
+	@Test
+	fn ExactWideCostAccumulation()
+	{
+		a.Wide(true)
+		small.Reset()
+		assert small.Accept(0x61)
+		assert small.Accept(0x62)
+		assert small.Accept(0x61)
+		assert small.Accept(0x62)
+		assert small.EncodeSegment()
+		assert small.Count() == 2
+		assert small.Token(0) == 3
+		assert small.Token(1) == 3
+		a.Wide(false)
+	}
+
+	/**
+	 * Verifies malformed UTF-8 and byte/token overflow invalidate output and Reset permits reuse.
+	 */
+	@Test
+	fn InvalidUtf8CapacityAndReset()
+	{
+		small.Reset()
+		assert small.Accept(0xc0)
+		assert !small.EncodeSegment()
+		assert small.Failed()
+		assert small.Count() == 0
+		small.Reset()
+
+		for (var i = 0; i < 8; i++) {
+			assert small.Accept(0x61)
+		}
+
+		assert !small.Accept(0x61)
+		assert !small.EncodeSegment()
+		small.Reset()
+
+		for (var i = 0; i < 5; i++) {
+			assert small.Accept(0x61)
+		}
+
+		assert !small.EncodeSegment()
+		assert small.Count() == 0
+		small.Reset()
+		assert small.Accept(0x61)
+		assert small.EncodeSegment()
+		assert small.Count() == 1
+	}
+
+	/**
+	 * Verifies space normalization, byte/input bounds and an alternate lowercase mapping provider.
+	 */
+	@Test
+	fn NormalizationBoundsAndAlternateProvider()
+	{
+		norm.Reset()
+		assert norm.Accept(0x20)
+		assert norm.Accept(0x20)
+		assert norm.Accept(0x61)
+		assert norm.Accept(0x20)
+		assert norm.Length() == 7
+		assert norm.Read(0) == 0xe2
+		assert norm.Read(3) == 0x61
+		assert !norm.Accept(0x62)
+		assert norm.Length() == 0
+		norm.Reset()
+		assert !norm.Accept(0x09)
+		lower.Reset()
+		assert lower.Accept(0x41)
+		assert lower.Read(3) == 0x61
+		assert lower.Length() == 4
+	}
+
+	/**
+	 * Verifies UTF-8 preservation, skipped pieces, first-piece rules and invalidation of all bytes on failure.
+	 */
+	@Test
+	fn Utf8DecodeSpecialSlotsAndFailureAtomicity()
+	{
+		decoder.Reset()
+		assert decoder.Append(6)
+		assert decoder.Append(8)
+		assert decoder.Append(4)
+		assert decoder.Length() == 0
+		assert decoder.Append(5)
+		assert decoder.Append(4)
+		assert decoder.Length() == 3
+		assert decoder.Read(0) == 0xc3
+		assert decoder.Read(1) == 0xa9
+		assert decoder.Read(2) == 0x20
+		assert !decoder.Append(-1)
+		assert decoder.Length() == 0
+		assert !decoder.Append(1)
+		decoder.Reset()
+
+		for (var i = 0; i < 8; i++) {
+			assert decoder.Append(1)
+		}
+
+		assert !decoder.Append(1)
+		assert decoder.Length() == 0
+		other.Reset()
+		assert other.Append(4)
+		assert other.Append(1)
+		assert other.Length() == 1
+	}
 }

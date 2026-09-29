@@ -10,7 +10,9 @@ components = [
     "BpeMergeEngine64Test",
     "Gpt2BpeTokenizer64Test",
     "Gpt2BpeDecoder128Test",
-    "UnigramTest"
+    "UnigramTest",
+    "StoredUnigramTest",
+    "StoredByteBuffersTest"
 ]
 
 [build.debug]

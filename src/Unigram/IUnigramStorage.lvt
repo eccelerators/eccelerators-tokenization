@@ -1,0 +1,31 @@
+namespace Eccelerators.Tokenization.Unigram
+
+/**
+ * Exclusive scheduled 64-bit word storage for Unigram working state.
+ * Read/Write complete before returning; valid writes must retain exact bits.
+ * No initial content is promised. Hardware context reset cancels outstanding transactions;
+ * callers reset the segmenter and provider together. Logical segmenter Reset only invalidates
+ * metadata and must not race a transaction. IsValidAddress must be
+ * true for each word from zero through the requested final address.
+ */
+interface IUnigramStorage
+{
+	/**
+	 * Reports whether address is valid, in 64-bit word units. Valid addresses must form a contiguous range from zero.
+	 * This is a query, not a reservation; the consumer owns exclusive access.
+	 */
+	fn IsValidAddress(address: int) bool
+
+	/**
+	 * Waits for the 64-bit word at a valid address and returns its exact stored value.
+	 * The consumer must write that location before reading; initial contents are unspecified.
+	 * Calls are serialized in the shared clock/reset context.
+	 */
+	fn Read(address: int) logic[64]
+
+	/**
+	 * Waits until the value has been stored at a valid 64-bit word address.
+	 * A following serialized Read must return that value. No single-cycle latency is promised.
+	 */
+	fn Write(address: int, value: logic[64])
+}

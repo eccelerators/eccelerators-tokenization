@@ -1,18 +1,63 @@
 namespace Eccelerators.Tokenization.Unigram
-/** Byte trie and exact nonnegative additive costs (negative log scores).
+
+/**
+ * Byte trie and exact nonnegative additive costs (negative log scores).
  * Costs must be <= 2^40; caller chooses a common exact scale. No rounding here.
  * Next returns -1 when absent. Failed distinguishes absent data from I/O failure.
  * TokenFlags: bit0 special (skipped on decode), bit1 unassigned (also skipped).
  * UTF-8 pieces must be valid; no byte fallback. Unknowns fuse within a segment.
  */
-interface IUnigramVocabulary {
- fn Next(node: int, value: byte) int
- fn Terminal(node: int) int
- fn Cost(token: int) logic[64]
- fn Unknown() int
- fn UnknownCost() logic[64]
- fn TokenLength(token: int) int
- fn TokenByte(token: int, index: int) byte
- fn TokenFlags(token: int) int
- fn Failed() bool
+interface IUnigramVocabulary
+{
+	/**
+	 * Returns the trie child reached by value from node, or -1 if no edge exists.
+	 * Node 0 is the root. Report table/I/O failures through Failed so absence is distinguishable.
+	 */
+	fn Next(node: int, value: byte) int
+
+	/**
+	 * Returns the nonnegative token ID ending at node, or -1 for a nonterminal.
+	 * Report malformed records or I/O errors through Failed.
+	 */
+	fn Terminal(node: int) int
+
+	/**
+	 * Returns a token's exact nonnegative additive cost, at most 2^40, in the provider's common scale.
+	 * No implicit score rounding is performed; report invalid records through Failed.
+	 */
+	fn Cost(token: int) logic[64]
+
+	/**
+	 * Returns the nonnegative unknown-token ID used when no single-codepoint piece exists.
+	 */
+	fn Unknown() int
+
+	/**
+	 * Returns the unknown-token cost in the same exact scale as Cost, at most 2^40.
+	 */
+	fn UnknownCost() logic[64]
+
+	/**
+	 * Returns the UTF-8 piece length in bytes for an ordinary token, or a negative value on failure.
+	 * The decoder requires 1..MAX_PIECE bytes and checks Failed for provider errors.
+	 */
+	fn TokenLength(token: int) int
+
+	/**
+	 * Returns one UTF-8 piece byte at index 0..TokenLength(token)-1.
+	 * The provider guarantees valid UTF-8 pieces and reports table/I/O errors through Failed.
+	 */
+	fn TokenByte(token: int, index: int) byte
+
+	/**
+	 * Returns flags 0..3: bit 0 marks special IDs, bit 1 unassigned IDs; either skips decoding.
+	 * Invalid IDs must return a negative value or set Failed, not masquerade as unassigned.
+	 */
+	fn TokenFlags(token: int) int
+
+	/**
+	 * Reports a retained vocabulary/table/I/O failure. Consumers check it before publishing results.
+	 * Recovery belongs to the provider and caller; consumer Reset does not reset this state.
+	 */
+	fn Failed() bool
 }

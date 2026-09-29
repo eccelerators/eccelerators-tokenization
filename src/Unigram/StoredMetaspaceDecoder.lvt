@@ -1,0 +1,159 @@
+namespace Eccelerators.Tokenization.Unigram
+
+using Eccelerators.Tokenization.Storage
+
+/**
+ * Decodes valid UTF-8 vocabulary pieces through borrowed exclusive byte storage.
+ * Skips flagged pieces; removes every U+2581 from the first non-skipped piece and replaces
+ * later markers with spaces. Other UTF-8 bytes are retained without cleanup.
+ * Reset is required before the first Append and after failure; it does not clear storage.
+ * Callers serialize access and share hardware reset with the provider.
+ */
+component StoredMetaspaceDecoder<MAX_OUTPUT: int, MAX_PIECE: int, VOCAB: IUnigramVocabulary, STORAGE: IStorage<byte>>
+{
+	static assert MAX_OUTPUT > 0 && MAX_OUTPUT <= 65536, "invalid output capacity"
+
+	static assert MAX_PIECE > 0 && MAX_PIECE <= MAX_OUTPUT, "invalid piece capacity"
+
+	// Borrowed vocabulary and exclusive output-byte storage.
+	vocab: VOCAB
+	storage: STORAGE
+
+	// Live byte count, first-piece handling and sticky failure; initialized by Reset.
+	length: int
+	first: bool
+	error: bool
+
+	/**
+	 * Borrows vocabulary and exclusive byte storage in the caller's clock/reset context.
+	 * Storage must cover 0..MAX_OUTPUT-1. Call Reset before the first Append.
+	 */
+	new(vocab: VOCAB, storage: STORAGE)
+	{
+		this.vocab = vocab
+		this.storage = storage
+	}
+
+	/**
+	 * Starts a new decoded sequence, enabling first-piece marker removal and clearing sticky failure.
+	 * Call before the first Append and each new sequence. Storage and vocabulary state are not cleared.
+	 */
+	public fn Reset()
+	{
+		length = 0
+		first = true
+		error = false
+	}
+
+	/**
+	 * Invalidates all decoded bytes, latches failure and returns false; storage is not cleared.
+	 */
+	fn Fail() bool
+	{
+		length = 0
+		error = true
+		return false
+	}
+
+	/**
+	 * Appends one vocabulary piece and waits for its output writes to complete.
+	 * Special/unassigned IDs are skipped without consuming first-piece state. Requires valid UTF-8
+	 * pieces of at most MAX_PIECE bytes. Bad records, insufficient storage or MAX_OUTPUT overflow
+	 * return false and invalidate all output until Reset; no partial result may be consumed.
+	 */
+	public fn Append(token: int) bool
+	{
+		if (error) {
+			return false
+		}
+
+		if (!storage.IsValidAddress(MAX_OUTPUT - 1)) {
+			return Fail()
+		}
+
+		var flags = vocab.TokenFlags(token)
+
+		if (flags < 0 || flags > 3 || vocab.Failed()) {
+			return Fail()
+		}
+
+		if (flags != 0) {
+			return true
+		}
+
+		var n = vocab.TokenLength(token)
+
+		if (n <= 0 || n > MAX_PIECE) {
+			return Fail()
+		}
+
+		var i = 0
+
+		while (i < n) {
+			var b = vocab.TokenByte(token, i)
+			var marker = false
+
+			if (b == 0xe2 && i + 2 < n) {
+				marker = vocab.TokenByte(token, i + 1) == 0x96 && vocab.TokenByte(token, i + 2) == 0x81
+			}
+
+			if (marker) {
+				i += 3
+
+				if (!first) {
+					if (length >= MAX_OUTPUT) {
+						return Fail()
+					}
+
+					storage.Write(length, 0x20)
+					length++
+				}
+			} else {
+				if (length >= MAX_OUTPUT) {
+					return Fail()
+				}
+
+				storage.Write(length, b)
+				length++
+				i++
+			}
+		}
+
+		first = false
+
+		if (vocab.Failed()) {
+			return Fail()
+		}
+
+		return true
+	}
+
+	/**
+	 * Returns the live decoded UTF-8 byte count, or zero after Reset or failure.
+	 */
+	public fn Length() int
+	{
+		return length
+	}
+
+	/**
+	 * Returns a live decoded byte at index 0..Length()-1, waiting for storage completion.
+	 * Returns zero outside the live range or after failure.
+	 */
+	public fn Read(index: int) byte
+	{
+		if (index < 0 || index >= length || error) {
+			return 0x00
+		}
+
+		return storage.Read(index)
+	}
+
+	/**
+	 * Reports sticky vocabulary, storage-capacity or output-overflow failure since Reset.
+	 */
+	public fn Failed() bool
+	{
+		return error
+	}
+}

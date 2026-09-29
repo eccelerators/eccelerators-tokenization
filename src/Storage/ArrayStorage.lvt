@@ -1,0 +1,41 @@
+namespace Eccelerators.Tokenization.Storage
+
+/**
+ * Dependency-free array provider for small IStorage consumers.
+ * Owns CAPACITY elements; no BRAM inference or transaction-latency guarantee is made.
+ * Callers retain the storage interface's exclusive-access and initialization-before-read rules.
+ */
+component ArrayStorage<T, CAPACITY: int> : IStorage<T>
+{
+	static assert CAPACITY > 0, "invalid storage capacity"
+
+	// Owned fallback elements; consumers control which locations are live.
+	data: T[CAPACITY]
+
+	/**
+	 * Returns true for element addresses 0..CAPACITY-1.
+	 */
+	override fn IsValidAddress(address: int) bool
+	{
+		return address >= 0 && address < CAPACITY
+	}
+
+	/**
+	 * Returns the element at address; asserts that address is in 0..CAPACITY-1.
+	 * Consumers must still obey IStorage initialization-before-read rules.
+	 */
+	override fn Read(address: int) T
+	{
+		assert IsValidAddress(address)
+		return data[address]
+	}
+
+	/**
+	 * Stores value at address; asserts that address is in 0..CAPACITY-1.
+	 */
+	override fn Write(address: int, value: T)
+	{
+		assert IsValidAddress(address)
+		data[address] = value
+	}
+}

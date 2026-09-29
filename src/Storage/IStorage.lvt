@@ -1,0 +1,30 @@
+namespace Eccelerators.Tokenization.Storage
+
+/**
+ * Exclusive scheduled storage with contiguous valid addresses from zero.
+ * Initial cells are unspecified. Consumers initialize every reachable cell
+ * before reading. Logical consumer Reset invalidates metadata without clearing cells.
+ * Hardware reset must cancel provider and consumer operations together.
+ * Read/Write complete before returning and may take many cycles.
+ */
+interface IStorage<T>
+{
+	/**
+	 * Reports whether address is valid, in element units. Valid addresses must form a contiguous range from zero.
+	 * This is a query, not a reservation; the consumer owns exclusive access.
+	 */
+	fn IsValidAddress(address: int) bool
+
+	/**
+	 * Waits for the element at a valid address and returns its exact stored value.
+	 * The consumer must write that location before reading; initial contents are unspecified.
+	 * Calls are serialized in the shared clock/reset context.
+	 */
+	fn Read(address: int) T
+
+	/**
+	 * Waits until the value has been stored at a valid element address.
+	 * A following serialized Read must return that value. No single-cycle latency is promised.
+	 */
+	fn Write(address: int, value: T)
+}

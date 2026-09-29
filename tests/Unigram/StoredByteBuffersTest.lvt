@@ -1,0 +1,182 @@
+namespace Eccelerators.Tokenization.Tests.Unigram
+
+using Eccelerators.Tokenization.Unigram
+using Eccelerators.Tokenization.Storage
+
+/**
+ * Test provider that delays transfers and asserts every read follows a write.
+ * Poison invalidates all cells between requests without relying on context reset.
+ */
+component CheckedByteStorage<CAPACITY: int> : IStorage<byte>
+{
+	// Owned test cells and initialization markers; Poison invalidates every marker.
+	data: byte[CAPACITY]
+	valid: bool[CAPACITY]
+
+	/**
+	 * Invalidates every initialized-cell marker and overwrites data with a recognizable poison value.
+	 * Call only between completed transactions; this deliberately exposes read-before-write bugs.
+	 */
+	public fn Poison()
+	{
+		for (var i = 0; i < CAPACITY; i++) {
+			valid[i] = false
+			data[i] = 0xa5
+		}
+	}
+
+	/**
+	 * Returns whether the address falls within this test provider's contiguous capacity.
+	 */
+	override fn IsValidAddress(address: int) bool
+	{
+		return address >= 0 && address < CAPACITY
+	}
+
+	/**
+	 * Asserts an in-range initialized cell, waits through two explicit states, and returns its value.
+	 */
+	override fn Read(address: int) byte
+	{
+		assert IsValidAddress(address)
+		assert valid[address]
+
+		state {
+		}
+
+		state {
+		}
+
+		return data[address]
+	}
+
+	/**
+	 * Asserts an in-range address, waits through two explicit states, then writes and marks the cell initialized.
+	 */
+	override fn Write(address: int, value: byte)
+	{
+		assert IsValidAddress(address)
+
+		state {
+		}
+
+		state {
+		}
+
+		data[address] = value
+		valid[address] = true
+	}
+}
+
+/**
+ * Checks delayed byte storage, normalization/decoding bounds and reset reuse.
+ * Each test initializes the subjects it uses because Livt test methods share one instance.
+ */
+@Test
+component StoredByteBuffersTest
+{
+	// Owned delayed providers; two deliberately violate the consumer capacity contract.
+	normalBytes: CheckedByteStorage<15>
+	decodedBytes: CheckedByteStorage<6>
+	smallBytes: CheckedByteStorage<5>
+	shortNormalBytes: CheckedByteStorage<14>
+
+	// Owned subjects sharing the providers above; each test resets its own subjects.
+	normalizer: StoredAsciiMetaspace<4, 15, IdentityAscii, CheckedByteStorage<15>>
+	decoder: StoredMetaspaceDecoder<6, 5, ArrayVocabulary, CheckedByteStorage<6>>
+	shortNormalizer: StoredAsciiMetaspace<4, 15, IdentityAscii, CheckedByteStorage<14>>
+	shortDecoder: StoredMetaspaceDecoder<6, 5, ArrayVocabulary, CheckedByteStorage<5>>
+
+	/**
+	 * Owns delayed/poisoned providers and normalizer/decoder subjects, including undersized providers.
+	 * Tests explicitly poison/reset the subjects they exercise.
+	 */
+	new()
+	{
+		normalBytes = new CheckedByteStorage<15>()
+		decodedBytes = new CheckedByteStorage<6>()
+		smallBytes = new CheckedByteStorage<5>()
+		shortNormalBytes = new CheckedByteStorage<14>()
+		normalizer = new StoredAsciiMetaspace<4, 15, IdentityAscii, CheckedByteStorage<15>>(new IdentityAscii(), normalBytes)
+		decoder = new StoredMetaspaceDecoder<6, 5, ArrayVocabulary, CheckedByteStorage<6>>(new ArrayVocabulary(), decodedBytes)
+		shortNormalizer = new StoredAsciiMetaspace<4, 15, IdentityAscii, CheckedByteStorage<14>>(new IdentityAscii(), shortNormalBytes)
+		shortDecoder = new StoredMetaspaceDecoder<6, 5, ArrayVocabulary, CheckedByteStorage<5>>(new ArrayVocabulary(), smallBytes)
+	}
+
+	/**
+	 * Verifies delayed writes, space collapsing, overflow invalidation and reuse after poisoning/reset.
+	 */
+	@Test
+	fn DelayedNormalizationAndReuse()
+	{
+		normalBytes.Poison()
+		normalizer.Reset()
+		assert normalizer.Read(0) == 0
+		assert normalizer.Accept(0x61)
+		assert normalizer.Length() == 4
+		assert normalizer.Read(0) == 0xe2
+		assert normalizer.Read(1) == 0x96
+		assert normalizer.Read(2) == 0x81
+		assert normalizer.Read(3) == 0x61
+		assert normalizer.Accept(0x20)
+		assert normalizer.Accept(0x20)
+		assert normalizer.Accept(0x62)
+		assert normalizer.Length() == 8
+		assert normalizer.Read(7) == 0x62
+		assert !normalizer.Accept(0x63)
+		assert normalizer.Failed()
+		assert normalizer.Read(0) == 0
+		normalBytes.Poison()
+		normalizer.Reset()
+		assert normalizer.Accept(0x62)
+		assert normalizer.Read(3) == 0x62
+		assert normalizer.Read(-1) == 0
+		assert normalizer.Read(4) == 0
+	}
+
+	/**
+	 * Verifies skipped/marker pieces, UTF-8 output, exact capacity and reuse after output failure.
+	 */
+	@Test
+	fn DelayedUtf8CapacityAndReuse()
+	{
+		decodedBytes.Poison()
+		decoder.Reset()
+		assert decoder.Read(0) == 0
+		assert decoder.Append(6)
+		assert decoder.Append(4)
+		assert decoder.Length() == 0
+		assert decoder.Append(5)
+		assert decoder.Read(0) == 0xc3
+		assert decoder.Read(1) == 0xa9
+		assert decoder.Append(3)
+		assert decoder.Append(4)
+		assert decoder.Append(1)
+		assert decoder.Length() == 6
+		assert decoder.Read(4) == 0x20
+		assert decoder.Read(5) == 0x61
+		assert !decoder.Append(2)
+		assert decoder.Failed()
+		assert decoder.Read(0) == 0
+		decodedBytes.Poison()
+		decoder.Reset()
+		assert decoder.Append(2)
+		assert decoder.Read(0) == 0x62
+		assert decoder.Read(-1) == 0
+		assert decoder.Read(1) == 0
+	}
+
+	/**
+	 * Verifies normalization and decoding reject insufficient storage before any payload access.
+	 */
+	@Test
+	fn RejectShortProviders()
+	{
+		shortNormalizer.Reset()
+		assert !shortNormalizer.Accept(0x61)
+		assert shortNormalizer.Failed()
+		shortDecoder.Reset()
+		assert !shortDecoder.Append(1)
+		assert shortDecoder.Failed()
+	}
+}

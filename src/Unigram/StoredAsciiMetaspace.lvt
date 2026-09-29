@@ -1,0 +1,142 @@
+namespace Eccelerators.Tokenization.Unigram
+
+using Eccelerators.Tokenization.Storage
+
+/**
+ * Normalizes printable ASCII, collapses spaces and emits UTF-8 U+2581 Metaspace.
+ * Borrows a map and exclusive byte storage; calls are serialized and complete their writes.
+ * Leading/trailing single spaces are retained; prefix-space handling is always enabled.
+ * Application policy owns nonblank/special-token rejection. Logical Reset invalidates lengths;
+ * hardware reset must cancel consumer/provider operations together.
+ */
+component StoredAsciiMetaspace<MAX_INPUT: int, MAX_BYTES: int, MAP: IAsciiNormalization, STORAGE: IStorage<byte>>
+{
+	static assert MAX_INPUT > 0 && MAX_INPUT <= 4096, "invalid input capacity"
+
+	static assert MAX_BYTES >= 3 * MAX_INPUT + 3 && MAX_BYTES <= 16384, "unsafe normalized capacity"
+
+	// Borrowed normalization and exclusive output storage providers.
+	map: MAP
+	storage: STORAGE
+
+	// Live output/input counts and space/error state; Reset invalidates metadata only.
+	length: int
+	inputs: int
+	space: bool
+	error: bool
+
+	/**
+	 * Borrows map and exclusive byte storage in the caller's clock/reset context.
+	 * Storage must cover addresses 0..MAX_BYTES-1; call Reset before admission.
+	 */
+	new(map: MAP, storage: STORAGE)
+	{
+		this.map = map
+		this.storage = storage
+	}
+
+	/**
+	 * Invalidates normalized bytes and clears input count, whitespace state and sticky failure.
+	 * Does not clear storage or reset the borrowed mapping provider; serialize this with Accept.
+	 */
+	public fn Reset()
+	{
+		length = 0
+		inputs = 0
+		space = false
+		error = false
+	}
+
+	/**
+	 * Writes UTF-8 U+2581 (E2 96 81) at the current output end and advances length by three.
+	 * Accept has already checked storage capacity; static bounds reserve this expansion.
+	 */
+	fn Marker()
+	{
+		storage.Write(length, 0xe2)
+		storage.Write(length + 1, 0x96)
+		storage.Write(length + 2, 0x81)
+		length += 3
+	}
+
+	/**
+	 * Maps and appends one printable ASCII byte (0x20..0x7e), counting it toward MAX_INPUT.
+	 * Waits for all output writes; true means the normalized prefix is available through Read.
+	 * Invalid input/mapping, inadequate storage or overflow returns false and invalidates all bytes
+	 * until Reset. Runs of spaces become one UTF-8 U+2581 marker.
+	 */
+	public fn Accept(value: byte) bool
+	{
+		if (error) {
+			return false
+		}
+
+		if (!storage.IsValidAddress(MAX_BYTES - 1)) {
+			error = true
+			length = 0
+			return false
+		}
+
+		if (value < 0x20 || value > 0x7e || inputs >= MAX_INPUT) {
+			error = true
+			length = 0
+			return false
+		}
+
+		inputs++
+		var v = map.Map(value)
+
+		if (v < 32 || v > 126) {
+			error = true
+			length = 0
+			return false
+		}
+
+		if (v == 32) {
+			if (!space) {
+				Marker()
+			}
+
+			space = true
+		} else {
+			if (length == 0) {
+				Marker()
+			}
+
+			storage.Write(length, v as byte)
+			length++
+			space = false
+		}
+
+		return true
+	}
+
+	/**
+	 * Returns the live normalized byte count, or zero after Reset or failure.
+	 */
+	public fn Length() int
+	{
+		return length
+	}
+
+	/**
+	 * Returns a live normalized byte at index 0..Length()-1, waiting for its storage read.
+	 * Returns zero for invalid indices or a failed request; this does not reserve the byte.
+	 */
+	public fn Read(index: int) byte
+	{
+		if (index < 0 || index >= length || error) {
+			return 0x00
+		}
+
+		return storage.Read(index)
+	}
+
+	/**
+	 * Reports a sticky input, mapping, storage-capacity or overflow error since Reset.
+	 */
+	public fn Failed() bool
+	{
+		return error
+	}
+}

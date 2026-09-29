@@ -1,0 +1,177 @@
+namespace Eccelerators.Tokenization.Tests.Unigram
+
+using Eccelerators.Tokenization.Unigram
+
+/**
+ * Delayed, poisoned-until-written test workspace for detecting reads of stale or unwritten cells.
+ * All accesses assert bounds; read/write operations each include two explicit delay states.
+ */
+component CheckedUnigramStorage<WORDS: int> : IUnigramStorage
+{
+	// Owned test cells and per-cell write history.
+	data: logic[WORDS, 64]
+	written: bool[WORDS]
+
+	/**
+	 * Returns whether the address falls within this test provider's contiguous capacity.
+	 */
+	override fn IsValidAddress(address: int) bool
+	{
+		return address >= 0 && address < WORDS
+	}
+
+	/**
+	 * Asserts an in-range initialized cell, waits through two explicit states, and returns its value.
+	 */
+	override fn Read(address: int) logic[64]
+	{
+		assert address >= 0 && address < WORDS
+		assert written[address]
+
+		state {
+		}
+
+		state {
+		}
+
+		return data[address]
+	}
+
+	/**
+	 * Asserts an in-range address, waits through two explicit states, then writes and marks the cell initialized.
+	 */
+	override fn Write(address: int, value: logic[64])
+	{
+		assert address >= 0 && address < WORDS
+
+		state {
+		}
+
+		state {
+		}
+
+		data[address] = value
+		written[address] = true
+	}
+
+	/**
+	 * Invalidates every initialized-cell marker and overwrites data with a recognizable poison value.
+	 * Call only between completed transactions; this deliberately exposes read-before-write bugs.
+	 */
+	public fn Poison()
+	{
+		for (var i = 0; i < WORDS; i++) {
+			written[i] = false
+			data[i] = 0xdeadbeef as logic[64]
+		}
+	}
+}
+
+/**
+ * Checks segmentation with delayed, initially invalid workspace and exact wide costs.
+ * Exercises reuse, accumulated-token bounds and rejection before access to undersized storage.
+ */
+@Test
+component StoredUnigramTest
+{
+	// Owned synthetic vocabulary and exact/undersized workspaces.
+	vocab: ArrayVocabulary
+	storage: CheckedUnigramStorage<51>
+	tooSmall: CheckedUnigramStorage<50>
+
+	// Owned valid and deliberately undersized segmentation subjects.
+	core: StoredUnigramSegmenter<8, 4, ArrayVocabulary, CheckedUnigramStorage<51>>
+	invalid: StoredUnigramSegmenter<8, 4, ArrayVocabulary, CheckedUnigramStorage<50>>
+
+	/**
+	 * Owns the vocabulary, delayed workspaces and valid/undersized segmenters.
+	 * Tests initialize their live storage and reset the exercised subjects.
+	 */
+	new()
+	{
+		vocab = new ArrayVocabulary()
+		storage = new CheckedUnigramStorage<51>()
+		tooSmall = new CheckedUnigramStorage<50>()
+		core = new StoredUnigramSegmenter<8, 4, ArrayVocabulary, CheckedUnigramStorage<51>>(vocab, storage)
+		invalid = new StoredUnigramSegmenter<8, 4, ArrayVocabulary, CheckedUnigramStorage<50>>(vocab, tooSmall)
+	}
+
+	/**
+	 * Verifies initialized-before-read storage, unknown fusion, high-bit costs, capacity exhaustion and UTF-8 reuse.
+	 */
+	@Test
+	fn DelayedUninitializedStorageAndReuse()
+	{
+		storage.Poison()
+		core.Reset()
+		assert core.Accept(0x61)
+		assert core.Accept(0x62)
+		assert core.EncodeSegment()
+		assert core.Count() == 1
+		assert core.Token(0) == 3
+		core.BeginSegment()
+		assert core.Accept(0x7e)
+		assert core.Accept(0x7e)
+		assert core.EncodeSegment()
+		assert core.Count() == 2
+		assert core.Token(1) == 0
+		storage.Poison()
+		core.Reset()
+		vocab.Wide(true)
+
+		for (var i = 0; i < 4; i++) {
+			assert core.Accept(0x61)
+			assert core.Accept(0x62)
+		}
+
+		assert core.EncodeSegment()
+		assert core.Count() == 4
+
+		for (var i = 0; i < 4; i++) {
+			assert core.Token(i) == 3
+		}
+
+		core.BeginSegment()
+		assert core.Accept(0x61)
+		assert !core.EncodeSegment()
+		assert core.Count() == 0
+		assert core.Token(0) == -1
+		vocab.Wide(false)
+		core.Reset()
+		assert core.Accept(0xc3)
+		assert core.Accept(0xa9)
+		assert core.EncodeSegment()
+		assert core.Token(0) == 5
+	}
+
+	/**
+	 * Verifies exact wide-cost comparison selects two cheaper tokens over one expensive piece.
+	 */
+	@Test
+	fn WideCostsChooseCheaperSplit()
+	{
+		storage.Poison()
+		core.Reset()
+		vocab.PreferSplit(true)
+		assert core.Accept(0x61)
+		assert core.Accept(0x62)
+		assert core.EncodeSegment()
+		assert core.Count() == 2
+		assert core.Token(0) == 1
+		assert core.Token(1) == 2
+		vocab.PreferSplit(false)
+	}
+
+	/**
+	 * Verifies a workspace one word short fails admission without attempting a storage access.
+	 */
+	@Test
+	fn RejectShortStorageBeforeAnyAccess()
+	{
+		invalid.Reset()
+		assert !invalid.Accept(0x61)
+		assert invalid.Failed()
+		assert invalid.Count() == 0
+		assert invalid.Token(0) == -1
+	}
+}

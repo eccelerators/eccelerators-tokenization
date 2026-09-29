@@ -1,0 +1,46 @@
+namespace Eccelerators.Tokenization.Unigram
+
+/**
+ * Dependency-free array workspace for the compatibility segmenter.
+ * Owns WORDS 64-bit cells; larger hardware designs may inject a RAM provider.
+ * Consumers still initialize live cells and serialize access under IUnigramStorage.
+ */
+component ArrayUnigramStorage<WORDS: int> : IUnigramStorage
+{
+	static assert WORDS > 0, "invalid unigram storage capacity"
+
+	// Owned fallback 64-bit workspace cells.
+	data: logic[WORDS, 64]
+
+	/**
+	 * Returns true for 64-bit word addresses 0..WORDS-1.
+	 */
+	override fn IsValidAddress(address: int) bool
+	{
+		return address >= 0 && address < WORDS
+	}
+
+	/**
+	 * Returns the stored word, or zero outside 0..WORDS-1.
+	 * Consumers must not use this fallback to bypass IUnigramStorage preconditions.
+	 */
+	override fn Read(address: int) logic[64]
+	{
+		if (address < 0 || address >= WORDS) {
+			return 0
+		}
+
+		return data[address]
+	}
+
+	/**
+	 * Stores all 64 bits at a valid word address; ignores out-of-range writes.
+	 * Consumers are required to validate capacity before using this provider.
+	 */
+	override fn Write(address: int, value: logic[64])
+	{
+		if (address >= 0 && address < WORDS) {
+			data[address] = value
+		}
+	}
+}

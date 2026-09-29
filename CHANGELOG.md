@@ -2,6 +2,21 @@
 
 All notable changes to `Eccelerators.Tokenization` are recorded here.
 
+## Unreleased
+
+- Add generic scheduled `IStorage<T>` and array-backed default storage.
+- Add injected-storage normalization and Metaspace decoding while preserving
+  their original APIs; cover delayed/poisoned storage and capacity/reset reuse.
+
+- Add generic injected Unigram working storage, retaining the existing API as a
+  local-array composition of the same algorithm.
+- Allow uninitialized/reset-retained RAM, bound backtracking by output capacity,
+  and test delayed storage, read-before-write safety and insufficient capacity.
+- Preserve signed predecessor sentinels and high-bit cost ordering with explicit
+  vector-width conversions on the current compiler.
+- Apply the Livt design guide to storage/Unigram contracts and affected tests;
+  clarify ownership, address units, transaction completion and reset semantics.
+
 ## [0.1.0] - 2026-08-14
 
 - Add a storage-independent, bounded 64-symbol ranked BPE merge engine.

@@ -41,6 +41,8 @@ small combinational fixtures.
 |---|---|
 | `Eccelerators.Tokenization.Bpe` | Ranked BPE merge algorithm and merge-table contract |
 | `Eccelerators.Tokenization.Gpt2` | ASCII pre-tokenization, byte-level vocabulary contract, tokenizer, and decoder |
+| `Eccelerators.Tokenization.Unigram` | Exact-cost UTF-8 segmentation, ASCII normalization, Metaspace decoding and workspace contracts |
+| `Eccelerators.Tokenization.Storage` | Generic scheduled element storage and array-backed compatibility provider |
 
 ## 🧩 API Overview
 
@@ -225,3 +227,11 @@ See [the generic Unigram contracts and bounds](docs/unigram.md) for exact-cost
 segmentation, injectable ASCII normalization and UTF-8 Metaspace decoding.
 Existing GPT-2/BPE APIs remain available unchanged. The development version is
 used by the FLAN-T5 integration and awaits user publication.
+
+## Storage-backed Unigram maintenance
+
+The stored cores borrow exclusive storage; the original APIs own array-backed
+providers around the same algorithms. See [ownership, reset and storage units](docs/unigram.md#consumer-and-provider-responsibilities)
+for integration contracts and [source conventions](docs/unigram.md#source-conventions-and-verification)
+for the design-guide scope and test commands. The library imposes no Livt.IO or
+board dependency; applications choose their RAM adapters.

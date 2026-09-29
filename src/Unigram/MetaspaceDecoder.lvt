@@ -1,58 +1,70 @@
 namespace Eccelerators.Tokenization.Unigram
-/** Decode valid UTF-8 vocabulary pieces, skip special/unassigned slots, remove
- * every U+2581 in the first non-skipped piece and replace later ones with space.
- * Retains UTF-8 bytes, without cleanup or lossy ASCII conversion. All output is
- * invalidated on failure; Reset is required before reuse. Providers guarantee
- * valid UTF-8 pieces (checked when building/loading model tables).
+
+using Eccelerators.Tokenization.Storage
+
+/**
+ * Array-backed compatibility facade for StoredMetaspaceDecoder.
+ * Owns local output storage and the shared decoder; borrows the vocabulary.
+ * Reset before the first Append and after failure; output bytes are valid only within Length.
  */
-component MetaspaceDecoder<MAX_OUTPUT: int, MAX_PIECE: int, VOCAB: IUnigramVocabulary> {
- static assert MAX_OUTPUT > 0 && MAX_OUTPUT <= 65536, "invalid output capacity"
- static assert MAX_PIECE > 0 && MAX_PIECE <= MAX_OUTPUT, "invalid piece capacity"
- vocab: VOCAB
- output: byte[MAX_OUTPUT]
- length: int
- first: bool
- error: bool
- new(vocab: VOCAB) { this.vocab = vocab }
- public fn Reset() { length = 0
-  first = true
-  error = false }
- fn Fail() bool { length = 0
-  error = true
-  return false }
- public fn Append(token: int) bool {
-  if (error) { return false }
-  var flags = vocab.TokenFlags(token)
-  if (flags < 0 || flags > 3 || vocab.Failed()) { return Fail() }
-  if (flags != 0) { return true }
-  var n = vocab.TokenLength(token)
-  if (n <= 0 || n > MAX_PIECE) { return Fail() }
-  var i = 0
-  while (i < n) {
-   var b = vocab.TokenByte(token, i)
-   var marker = false
-   if (b == 0xe2 && i + 2 < n) {
-    marker = vocab.TokenByte(token, i + 1) == 0x96 && vocab.TokenByte(token, i + 2) == 0x81
-   }
-   if (marker) { i += 3
-    if (!first) {
-     if (length >= MAX_OUTPUT) { return Fail() }
-     output[length] = 0x20
-     length++ }
-   } else {
-    if (length >= MAX_OUTPUT) { return Fail() }
-    output[length] = b
-    length++
-    i++ }
-  }
-  first = false
-  if (vocab.Failed()) { return Fail() }
-  return true
- }
- public fn Length() int { return length }
- public fn Read(index: int) byte {
-  if (index < 0 || index >= length || error) { return 0x00 }
-  return output[index]
- }
- public fn Failed() bool { return error }
+component MetaspaceDecoder<MAX_OUTPUT: int, MAX_PIECE: int, VOCAB: IUnigramVocabulary>
+{
+	// Owned output storage and shared decoding core; vocabulary is borrowed.
+	storage: ArrayStorage<byte, MAX_OUTPUT>
+	core: StoredMetaspaceDecoder<MAX_OUTPUT, MAX_PIECE, VOCAB, ArrayStorage<byte, MAX_OUTPUT>>
+
+	/**
+	 * Borrows the vocabulary and owns local output storage plus the shared decoding core.
+	 * Call Reset before the first Append to initialize first-piece handling.
+	 */
+	new(vocab: VOCAB)
+	{
+		storage = new ArrayStorage<byte, MAX_OUTPUT>()
+		core = new StoredMetaspaceDecoder<MAX_OUTPUT, MAX_PIECE, VOCAB, ArrayStorage<byte, MAX_OUTPUT>>(vocab, storage)
+	}
+
+	/**
+	 * Starts a new decoded sequence, enabling first-piece marker removal and clearing sticky failure.
+	 * Call before the first Append and each new sequence. Storage and vocabulary state are not cleared.
+	 */
+	public fn Reset()
+	{
+		core.Reset()
+	}
+
+	/**
+	 * Appends one vocabulary piece and waits for its output writes to complete.
+	 * Special/unassigned IDs are skipped without consuming first-piece state. Requires valid UTF-8
+	 * pieces of at most MAX_PIECE bytes. Bad records, insufficient storage or MAX_OUTPUT overflow
+	 * return false and invalidate all output until Reset; no partial result may be consumed.
+	 */
+	public fn Append(token: int) bool
+	{
+		return core.Append(token)
+	}
+
+	/**
+	 * Returns the live decoded UTF-8 byte count, or zero after Reset or failure.
+	 */
+	public fn Length() int
+	{
+		return core.Length()
+	}
+
+	/**
+	 * Returns a live decoded byte at index 0..Length()-1, waiting for storage completion.
+	 * Returns zero outside the live range or after failure.
+	 */
+	public fn Read(index: int) byte
+	{
+		return core.Read(index)
+	}
+
+	/**
+	 * Reports sticky vocabulary, storage-capacity or output-overflow failure since Reset.
+	 */
+	public fn Failed() bool
+	{
+		return core.Failed()
+	}
 }
