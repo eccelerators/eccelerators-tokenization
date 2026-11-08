@@ -1,8 +1,21 @@
 [project]
 name = "Eccelerators.Tokenization"
-version = "0.2.0-dev"
+version = "0.2.0"
+description = "Bounded BPE and Unigram tokenization, text normalization, and decoding components for Livt hardware."
+authors = ["Denis Vasilík"]
+repository = "https://github.com/eccelerators/eccelerators-tokenization"
+homepage = "https://github.com/eccelerators/eccelerators-tokenization"
+keywords = ["fpga", "tokenization", "bpe", "unigram", "text"]
+license = "MIT"
 path = "src"
 outdir = "out"
+
+[project.organization]
+name = "Eccelerators GmbH"
+website = "https://eccelerators.com"
+
+[publish]
+files = ["README.md", "CHANGELOG.md", "LICENSE"]
 
 [tests]
 path = "tests"

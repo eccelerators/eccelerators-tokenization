@@ -2,7 +2,11 @@
 
 All notable changes to `Eccelerators.Tokenization` are recorded here.
 
-## Unreleased
+## [0.2.0] - 2026-11-08
+
+- Release the storage and Unigram improvements from the development series.
+- Add package discovery metadata and include the README, changelog and license
+  in publication.
 
 - Add generic scheduled `IStorage<T>` and array-backed default storage.
 - Add injected-storage normalization and Metaspace decoding while preserving

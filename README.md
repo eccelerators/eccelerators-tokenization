@@ -28,7 +28,7 @@ appropriately licensed tokenizer files.
 
 ```toml
 [dependencies]
-"Eccelerators.Tokenization" = "0.2.0-dev"
+"Eccelerators.Tokenization" = "0.2.0"
 ```
 
 The package has no runtime dependency on a processor or software tokenizer.
@@ -221,7 +221,7 @@ Source namespaces mirror their folders. Test namespaces use
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
 
-## Unigram extension (0.2.0-dev)
+## Unigram extension (0.2.0)
 
 See [the generic Unigram contracts and bounds](docs/unigram.md) for exact-cost
 segmentation, injectable ASCII normalization and UTF-8 Metaspace decoding.
